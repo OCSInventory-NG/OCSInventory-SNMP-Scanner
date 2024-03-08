@@ -1,5 +1,5 @@
 import configparser
-from pysnmp.hlapi import getCmd, SnmpEngine, CommunityData, UdpTransportTarget, ContextData, ObjectType, ObjectIdentity
+from pysnmp.hlapi import getCmd, SnmpEngine, CommunityData, UdpTransportTarget, ContextData, ObjectType, ObjectIdentity, UsmUserData, usmDESPrivProtocol, usmAesCfb128Protocol
 import ipaddress
 import json
 import logging
@@ -195,6 +195,67 @@ class SNMPScanner:
                 logging.error("Local SNMP configuration not found, exiting...")
                 exit()
 
+    def snmpv1_scan(self, community, ip, oid):
+        """Scan the network for SNMPv1 devices."""
+        errorIndication, errorStatus, errorIndex, varBinds = next(
+            getCmd(
+                SnmpEngine(),
+                CommunityData(community['name'], mpModel=0),
+                UdpTransportTarget((ip, 161), timeout=community['timeout'], retries=community['retries']),
+                ContextData(),
+                ObjectType(ObjectIdentity(oid)),
+            )
+        )
+
+        return errorIndication, errorStatus, errorIndex, varBinds
+    
+    def snmpv2c_scan(self, community, ip, oid):
+        """Scan the network for SNMPv2c devices."""
+        errorIndication, errorStatus, errorIndex, varBinds = next(
+            getCmd(
+                SnmpEngine(),
+                CommunityData(community['name'], mpModel=1),
+                UdpTransportTarget((ip, 161), timeout=community['timeout'], retries=community['retries']),
+                ContextData(),
+                ObjectType(ObjectIdentity(oid)),
+            )
+        )
+
+        return errorIndication, errorStatus, errorIndex, varBinds
+
+    def snmpv3_scan(self, community, ip, oid):
+        """Scan the network for SNMPv3 devices."""
+        authProtocol = None
+        privProtocol = None
+        if community['priv_protocol'] == 'DES':
+            privProtocol = usmDESPrivProtocol
+        elif community['priv_protocol'] == 'AES':
+            privProtocol = usmAesCfb128Protocol
+
+        if community['level'] == 'authNoPriv':
+            errorIndication, errorStatus, errorIndex, varBinds = next(
+                getCmd(
+                    SnmpEngine(),
+                    UsmUserData(community['user'], authKey=community['password'], authProtocol=authProtocol),
+                    UdpTransportTarget((ip, 161), timeout=community['timeout'], retries=community['retries']),
+                    ContextData(),
+                    ObjectType(ObjectIdentity(oid)),
+                )
+            )
+        elif community['level'] == 'authPriv':
+            errorIndication, errorStatus, errorIndex, varBinds = next(
+                getCmd(
+                    SnmpEngine(),
+                    UsmUserData(community['user'], authKey=community['password'], privKey=community['priv_password'], authProtocol=authProtocol, privProtocol=privProtocol),
+                    UdpTransportTarget((ip, 161), timeout=community['timeout'], retries=community['retries']),
+                    ContextData(),
+                    ObjectType(ObjectIdentity(oid)),
+                )
+            )
+
+        return errorIndication, errorStatus, errorIndex, varBinds
+
+
     def scan_network(self):
         """Scan the network for SNMP devices, based on fixed OIDs."""
         results = {}
@@ -206,15 +267,12 @@ class SNMPScanner:
                 device_results = {}
                 for name, oid in self.oids.items():
                     logging.debug(f"Getting OID {oid}...")
-                    errorIndication, errorStatus, errorIndex, varBinds = next(
-                        getCmd(
-                            SnmpEngine(),
-                            CommunityData(community['name'], mpModel=1),
-                            UdpTransportTarget((ip, 161), timeout=community['timeout'], retries=community['retries']),
-                            ContextData(),
-                            ObjectType(ObjectIdentity(oid)),
-                        )
-                    )
+                    if community['version'] == '2c':
+                        errorIndication, errorStatus, errorIndex, varBinds = self.snmpv2c_scan(community, ip, oid)
+                    elif community['version'] == '1':
+                        errorIndication, errorStatus, errorIndex, varBinds = self.snmpv1_scan(community, ip, oid)
+                    elif community['version'] == '3':
+                        errorIndication, errorStatus, errorIndex, varBinds = self.snmpv3_scan(community, ip, oid)
 
                     if errorIndication:
                         logging.debug(f"Error: {errorIndication}")
@@ -249,15 +307,12 @@ class SNMPScanner:
                     for section_name, section in template_oids[ip].items():
                         for name, oid in section.items():
                             logging.debug(f"Getting OID {oid}...")
-                            errorIndication, errorStatus, errorIndex, varBinds = next(
-                                getCmd(
-                                    SnmpEngine(),
-                                    CommunityData(community['name'], mpModel=1),
-                                    UdpTransportTarget((ip, 161), timeout=community['timeout'], retries=community['retries']),
-                                    ContextData(),
-                                    ObjectType(ObjectIdentity(oid))
-                                )
-                            )
+                            if community['version'] == '2c':
+                                errorIndication, errorStatus, errorIndex, varBinds = self.snmpv2c_scan(community, ip, oid)
+                            elif community['version'] == '1':
+                                errorIndication, errorStatus, errorIndex, varBinds = self.snmpv1_scan(community, ip, oid)
+                            elif community['version'] == '3':
+                                errorIndication, errorStatus, errorIndex, varBinds = self.snmpv3_scan(community, ip, oid)
 
                             if errorIndication:
                                 logging.error(f"Error: {errorIndication}")
