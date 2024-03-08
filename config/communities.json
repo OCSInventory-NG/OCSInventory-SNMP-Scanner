@@ -1,0 +1,30 @@
+[
+    {
+        "name": "public",
+        "version": "2c",
+        "user": "",
+        "level": "",
+        "password": "",
+        "auth_protocol": "",
+        "priv_protocol": "",
+        "priv_password": "",
+        "templates": [1, 2],
+        "subnets": ["172.18.15.245/32", "192.168.1.8/32"],
+        "retries": 1,
+        "timeout": 1
+    },
+    {
+        "name": "private",
+        "version": "2c",
+        "user": "",
+        "level": "",
+        "password": "",
+        "auth_protocol": "",
+        "priv_protocol": "",
+        "priv_password": "",
+        "templates": [3],
+        "subnets": ["192.168.1.3/32", "192.168.1.4/32", "192.168.1.5/32", "192.168.1.6/32"],
+        "retries": 0,
+        "timeout": 1
+    }
+]
