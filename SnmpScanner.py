@@ -1,4 +1,6 @@
 import configparser
+from datetime import datetime
+import socket
 from pysnmp.hlapi import getCmd, SnmpEngine, CommunityData, UdpTransportTarget, ContextData, ObjectType, ObjectIdentity, UsmUserData, usmDESPrivProtocol, usmAesCfb128Protocol
 import ipaddress
 import json
@@ -14,17 +16,14 @@ class SNMPScanner:
     SNMP Scanner class to scan a network for SNMP devices and send the results to OCS.
     Process is as follows:
         - Retrieve SNMP configuration from the server
-        - Scan the network based on the configuration
-        - Format the scan results to the OCS template
-        - Send the formatted results to the server
+        - Scan the network for SNMP devices
 
     The scanner can operate in two modes:
         - ONLINE: The scanner retrieves the SNMP configuration from the server and sends the results to the server
         - OFFLINE: The scanner uses a local configuration and stores the results locally
 
-    To determine which configuration to use, the scanner uses the following order of precedence:
-        1. If the configuration applies to the template
-        2. If the configuration applies to the subnet
+    To determine which configuration to use, the scanner checks the server's SNMP configuration and the local configuration. 
+    If the server's configuration is empty, the scanner uses the local configuration.
     """
     def __init__(self):
         self.read_config()
@@ -37,13 +36,21 @@ class SNMPScanner:
         self.asset_endpoint = "/asset/bases/"
         self.template_endpoint = "/templates/"
         self.asset_collection_endpoint = "/asset/collection/"
+        self.scanner_endpoint = "/snmp/scanner/"
         self.oids = {
             "description": "1.3.6.1.2.1.1.1.0",
             "name": "1.3.6.1.2.1.1.5.0",
             "srcmac": "1.3.6.1.2.1.2.2.1.6.1",
             "serial": "1.3.6.1.2.1.47.1.1.1.1.11.1"
         }
-        self.found = {}
+        self.nb_found = {}
+        self.nb_scanned = {}
+        self.ip = self.get_scanner_ip()
+
+    def get_scanner_ip(self):
+        """Get the local IP of the scanner."""
+        ip = socket.gethostbyname(socket.gethostname())
+        return ip
 
     def read_config(self):
         """Read the configuration file using configparser."""
@@ -59,13 +66,10 @@ class SNMPScanner:
             }
             self.base_url = config.get('api', 'ocs_base_url')
             self.mode = config.get('scanner', 'scanner_mode')
-            self.inventoy_dir = DIR + config.get('scanner', 'local_inventory_dir')
+            self.inventoy_dir = DIR + "/" + config.get('scanner', 'local_inventory_dir')
             self.log_level = config.get('scanner', 'log_level')
-
-    def generate_subnet_ips(self):
-        """Generate all IP addresses for the given subnet."""
-        network = ipaddress.ip_network(self.subnet)
-        return [str(ip) for ip in network.hosts()]
+            self.targets = config.get('scanner', 'targeted_subnets').split(',')
+            self.identifier = config.get('scanner', 'identifier')
 
     def get_auth_token(self, auth_data):
         """
@@ -101,61 +105,57 @@ class SNMPScanner:
             logging.error(f"Failed to reach server: {e}")
             return False
 
-    def parse_snmp_configuration(self, config):
-        """
-        Parse the SNMP configuration received from the server
-
-        We are particularly interested in : 
-            - enabled - whether SNMP is enabled
-            - which templates the configuration applies to
-            - which subnets the configuration applies to
-        """
-
-        parsed_configs = []
-
-        # first element is the enabled flag
-        enabled = config['value'][0]['value']
-
-        if not enabled:
-            print("SNMP is not enabled on the server, scan will not be launched")
+    def process_snmp_configs(self, configurations):
+        """Process the SNMP configurations, matching configurations to the scanner's subnets."""
+        # is SNMP enabled on the server?
+        if configurations['value'][0]['value'] != 1:
+            logging.error("SNMP is not enabled on the server, exiting...")
             exit()
 
-        # Skip the first element (index 0) as it's not part of the configurations
-        for config_group in config['value'][1:]:
-            # Initialize a template for storing parsed configuration
-            config_template = {
-                "name": "",
-                "version": "",
-                "user": "",
-                "level": "",
-                "password": "",
-                "auth_protocol": "",
-                "priv_protocol": "",
-                "priv_password": "",
-                "templates": [],
-                "subnets": [],
-                "retries": "",
-                "timeout": "",
-            }
+        processed_configs = []
+        # get scanner details
+        scanner = self.get_scanner_instance()
+        if not scanner:
+            logging.info("Scanner instance not found, scan will be performed using the local targeted_subnets configuration. A SnmpScanner instance will be created at the end of the scan.")
+        else:
+            scanner = scanner[0]
 
-            for item in config_group:
-                key = item['name']
-                value = item['value']
+        # if both scanner['subnets'] and self.targets are defined, server's configuration takes precedence
+        if not scanner and self.targets:
+            logging.info("Subnets retrieved from local configuration")
+        elif scanner and not self.targets:
+            self.targets = scanner['subnets']
+            logging.info("Subnets retrieved from the server")
+        elif scanner and self.targets:
+            self.targets = scanner['subnets']
+            logging.info("Subnets retrieved from the server and local configuration: using server's configuration.")
+        else:
+            logging.error("No subnets defined in local configuration or on the server, exiting...")
+            exit()
 
-                # Direct mapping for most fields
-                if key in config_template:
-                    config_template[key] = value
-                elif key == 'templates':
-                    # Assuming the value for templates can be directly assigned
-                    config_template['templates'] = value if value else []
-                elif key == 'subnets':
-                    # Ensuring subnets are stored as a list, even if only a single subnet is provided
-                    config_template['subnets'] = value if isinstance(value, list) else [value]
+        # starting from the second element
+        for config_group in configurations['value'][1:]:
+            # each config to dictionary
+            config_dict = {config['name']: config['value'] for config in config_group}
+            # if the config['subnets'] contains one of the scanner's subnets
+            subnets = []
+            for scanner_subnet in self.targets:
+                if scanner_subnet in config_dict['subnets']:
+                    subnets.append(scanner_subnet)
+            if subnets:
+                config_dict['subnets'] = subnets
+                processed_configs.append(config_dict)
+            else:
+                # config does not apply to the scanner's subnets
+                continue
 
-            parsed_configs.append(config_template)
+            self.generate_ips_for_configs(processed_configs)
 
-        self.generate_ips_for_configs(parsed_configs)
-        self.communities = parsed_configs
+        if not processed_configs:
+            logging.error("No SNMP configuration matching the scanner's subnets, exiting...")
+            exit()
+
+        return processed_configs
 
     def generate_ips_for_configs(self, parsed_configs):
         """Generate the list of IPs for each configuration."""
@@ -164,6 +164,55 @@ class SNMPScanner:
             for subnet in config['subnets']:
                 network = ipaddress.ip_network(subnet)
                 config['ips'] += [str(ip) for ip in network.hosts()]
+
+    def get_scanner_instance(self):
+        """Get the scanner instance from the server, using scanner's name as unique identifier."""
+        url = self.base_url + self.scanner_endpoint + f"?name={self.identifier}"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Token {self.token}",
+        }
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200 and response.json():
+            logging.info("Scanner instance retrieved successfully from OCS server")
+            return response.json()
+        elif response.status_code == 200 and not response.json():
+            logging.info(f"Scanner instance not found with identifier {self.identifier}")
+            return None
+        else:
+            logging.error(f"Failed to retrieve scanner instance: {response.status_code}")
+            return None
+
+    def update_or_create_scanner(self):
+        """Update or create the scanner instance on the server."""
+        url = self.base_url + self.scanner_endpoint + f"{self.identifier}/"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Token {self.token}",
+        }
+        total_found = sum(self.nb_found.values())
+        total_scanned = sum(self.nb_scanned.values())
+        payload = {
+            "identifier": self.identifier,
+            "ip": self.ip,
+            "subnets": self.targets,
+            "total_scanned": total_scanned,
+            "total_found": total_found,
+            "last_scan_date": self.scan_date.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        }
+
+        response = requests.put(url, json=payload, headers=headers)
+        if response.status_code == 200:
+            logging.info("Scanner instance updated successfully")
+        elif response.status_code == 404:
+            url = self.base_url + self.scanner_endpoint
+            response = requests.post(url, json=payload, headers=headers)
+            if response.status_code == 200:
+                logging.info("Scanner instance created successfully")
+            else:
+                logging.error(f"Failed to create scanner instance: {response.status_code}, reason: {response.json()}")
+        else:
+            logging.error(f"Failed to update scanner instance: {response.status_code}, reason: {response.json()}")
 
     def retrieve_snmp_configuration(self):
         """Retrieve SNMP configuration from the server."""
@@ -178,7 +227,7 @@ class SNMPScanner:
             if response.status_code == 200:
                 self.config = response.json()
                 logging.info("SNMP configuration retrieved successfully from OCS server")
-                self.parse_snmp_configuration(self.config)
+                self.communities = self.process_snmp_configs(self.config)
                 logging.info("SNMP configuration parsed successfully")
             else:
                 logging.error(f"Failed to retrieve SNMP configuration: {response.status_code}")
@@ -195,6 +244,14 @@ class SNMPScanner:
                 logging.error("Local SNMP configuration not found, exiting...")
                 exit()
 
+    def parse_subnet_list(self, subnet_str_list):
+        """Parse a list of subnet strings into a list of IPNetwork objects."""
+        subnets = []
+        for subnet in subnet_str_list:
+            network = ipaddress.ip_network(subnet)
+            subnets.append(network)
+        return subnets
+
     def snmpv1_scan(self, community, ip, oid):
         """Scan the network for SNMPv1 devices."""
         errorIndication, errorStatus, errorIndex, varBinds = next(
@@ -208,7 +265,7 @@ class SNMPScanner:
         )
 
         return errorIndication, errorStatus, errorIndex, varBinds
-    
+
     def snmpv2c_scan(self, community, ip, oid):
         """Scan the network for SNMPv2c devices."""
         errorIndication, errorStatus, errorIndex, varBinds = next(
@@ -252,6 +309,16 @@ class SNMPScanner:
                     ObjectType(ObjectIdentity(oid)),
                 )
             )
+        elif community['level'] == 'noAuthNoPriv':
+            errorIndication, errorStatus, errorIndex, varBinds = next(
+                getCmd(
+                    SnmpEngine(),
+                    UsmUserData(community['user']),
+                    UdpTransportTarget((ip, 161), timeout=community['timeout'], retries=community['retries']),
+                    ContextData(),
+                    ObjectType(ObjectIdentity(oid)),
+                )
+            )
 
         return errorIndication, errorStatus, errorIndex, varBinds
 
@@ -261,11 +328,14 @@ class SNMPScanner:
         results = {}
         logging.info("Starting network scan...")
         for community in self.communities:
-            self.found[community['name']] = 0
+            self.nb_found[community['name']] = 0
+            self.nb_scanned[community['name']] = 0
             for ip in community['ips']:
                 logging.debug(f"======== Scanning {ip} with community '{community['name']}' ========")
+                self.nb_scanned[community['name']] += 1
                 device_results = {}
                 for name, oid in self.oids.items():
+                    found = False
                     logging.debug(f"Getting OID {oid}...")
                     if community['version'] == '2c':
                         errorIndication, errorStatus, errorIndex, varBinds = self.snmpv2c_scan(community, ip, oid)
@@ -282,8 +352,10 @@ class SNMPScanner:
                         for varBind in varBinds:
                             logging.debug(f"OID: {oid} - {varBind.prettyPrint()}")
                             device_results[name] = varBind.prettyPrint().split('=')[1].strip()
+                            found = True
                         results[ip] = device_results
-                self.found[community['name']] += 1
+                if found:
+                    self.nb_found[community['name']] += 1
                         
         return results
 
@@ -321,10 +393,10 @@ class SNMPScanner:
                             else:
                                 for varBind in varBinds:
                                     logging.debug(f"OID: {oid} - {varBind.prettyPrint()}")
-                                    # get only the value of the oid
                                     value = varBind.prettyPrint().split('=')[1].strip()
                                     # if same section name already exists, add the new value to it
                                     if section_name in device_results:
+                                        # using the index 0 isnt an issue here bc we know there won't be more than one section
                                         device_results[section_name][0][name] = value
                                     else:
                                         device_results[section_name] = [{name: value}]
@@ -475,7 +547,6 @@ class SNMPScanner:
         if self.mode == 'ONLINE' and not self.check_server():
             logging.error("Server is not reachable, switching to OFFLINE mode...")
             self.mode = 'OFFLINE'
-            
         self.retrieve_snmp_configuration()
         # base scan
         scan_results = self.scan_network()
@@ -489,6 +560,10 @@ class SNMPScanner:
             # sending inventory to OCS
             self.send_to_ocs()
             logging.info(f"Scan complete. Found a total of {len(self.formatted_results)} devices")
+            # create scanner instance
+            self.scan_date = datetime.now()
+            self.update_or_create_scanner()
+
         elif self.mode == 'OFFLINE':
             self.store_data_locally(self.formatted_results)
             logging.info(f"Inventories stored locally in {self.inventoy_dir}. Scan complete. Found a total of {len(self.formatted_results)} devices.")
