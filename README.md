@@ -43,7 +43,7 @@ A dedicated user must be created on the OCS server with appropriate permissions 
 - Delete : `Inventory - Asset`
 
 #### SNMP configuration (mandatory)
-SNMP must be enabled on the OCS server and at least one community must be defined. Within a community, targeted scanners can be defined. Configuration for one community is as follows:
+SNMP must be enabled on the OCS server and at least one community must be defined. Within a community, targeted subnets can be defined. Configuration for one community is as follows:
 - Name : name of the community
 - Version : SNMP version to use (v1, v2c or v3)
 - User : SNMP user to use (only for SNMPv3)
@@ -69,7 +69,41 @@ Custom templates can be defined for specific devices in the OCS server's web int
 
 
 ## Installation and Configuration
-### Scanner installation and configuration
+### ONLINE Scanner installation and configuration
+#### Installation
+1. Clone the repository
+2. Navigate to the `SnmpScanner` directory
+3. Install the required packages using `pip`:
+```bash
+pip install -r requirements.txt
+```
+4. Edit the `config/scanner.conf` file to match your environment, see below for more information
+
+#### Configuration
+The `scanner.conf` file contains the following sections and fields:
+- `[auth]`: contains the authentication information for the OCS server
+	- `ocs_user` : the username of the SNMP user to authenticate with
+	- `ocs_password` : the password of the SNMP user to authenticate with
+- `[api]` : contains the API endpoint information for the OCS server
+	- `ocs_base_url` : the URL of the OCS server
+- `[scanner]` : contains the scanner information
+	- `scanner_mode` : the mode to run the scanner in (`ONLINE` or `OFFLINE`)
+	- `local_inventory_dir` : the directory to store the inventory data in when running in `offline` mode
+	- `targeted_subnets` : the subnets to scan, separated by commas no spaces, used in `offline` mode
+	- `log_level` : the log level to use (INFO, DEBUG, WARNING, ERROR, CRITICAL)
+	- `identifier` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
+
+#### Running the scanner
+TODO : depends on how the module will run (service, cron job, etc.).
+At the moment, run the scanner using the following command:
+```bash
+python SnmpScanner.py
+```
+
+#### Results
+The scanner will output the results of the scan to the console, as well as write them to the OCS server's database. The results will be available in the OCS server's web interface under the `Inventory` tab.
+
+### OFFLINE Scanner installation and configuration
 #### Installation
 1. Clone the repository
 2. Navigate to the `SnmpScanner` directory
@@ -78,12 +112,34 @@ Custom templates can be defined for specific devices in the OCS server's web int
 pip install -r requirements.txt
 ```
 4. Edit the `config/scanner.conf` file to match your environment
-5. Edit the `config/communities.json` file to match your SNMP configurations
+5. If using the `offline` mode, edit the `config/communities.json` file to match your SNMP configurations
 
 #### Configuration
-The `scanner.conf` file contains the following fields:
-TODO : add fields
+The `scanner.conf` file contains the following sections and fields:
+- [auth] : contains the authentication information for the OCS server
+	- `ocs_user` : the username of the SNMP user to authenticate with, not used in `offline` mode
+	- `ocs_password` : the password of the SNMP user to authenticate with, not used in `offline` mode
+- [api] : contains the API endpoint information for the OCS server
+	- `ocs_base_url` : the URL of the OCS server, not used in `offline` mode
+- [scanner] : contains the scanner information
+	- `scanner_mode` : the mode to run the scanner in (`ONLINE` or `OFFLINE`)
+	- `local_inventory_dir` : the directory to store the inventory data in when running in `offline` mode
+	- `targeted_subnets` : the subnets to scan, separated by commas no spaces, used in `offline` mode
+	- `log_level` : the log level to use (INFO, DEBUG, WARNING, ERROR, CRITICAL)
+	- `identifier` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
 
+The `communities.json` JSON file contains the SNMP configurations for the scanner, it contains a list of communities. Refer to the [SNMP Configuration](#SNMP-configuration-(mandatory)) section for more information on the mandatory fields. By default, the file also contains default configurations that you can copy and modify. Multiple communities can be defined in the file, the scanner will use the `subnets` field to determine which community to use to scan a device.
+
+#### Running the scanner
+TODO : depends on how the module will run (service, cron job, etc.).
+At the moment, run the scanner using the following command:
+```bash
+python SnmpScanner.py
+```
+
+#### Results
+The scanner will output the results of the scan to the console, as well as write them to individual files in the `local_inventory_dir` directory. The files will be named after the device's UUID and contain the inventory data in JSON format.
+The contents of these files can be used as is to inject the inventory data into the OCS server's database using the API (POST /asset/collection/).
 
 ## Interactions
 This section describes the interactions between the scanner and the OCS server, and the scanner and the devices to be scanned. It is meant to provide a broad overview of what requests are made to the server and the devices, and what responses are expected.
