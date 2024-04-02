@@ -7,6 +7,8 @@ The SNMP Scanner is a tool that allows to scan a network for devices and retriev
 The scanner can operate in two modes: `online` and `offline`.
 #### Online
 In `online` mode, the scanner queries the OCS server to check whether or not the device has already been scanned and if so, checks if a template has been defined for it. If a template is available, the scanner performs an advanced scan using the custom template. The scanner then sends the inventory data to the server.
+> Note : If the scanner is unable to get/send data to the OCS server, it will switch to `offline` mode automatically. Inventory data will be stored in individual files in the `local_inventory_dir` directory and local configuration will be used.
+
 #### Offline
 In `offline` mode, the scanner only uses the base template and does not query the OCS server at all, storing the inventory data in individual files at the end of the scan.
 
