@@ -7,6 +7,7 @@ import json
 import logging
 import requests
 import os
+import uuid
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -46,6 +47,21 @@ class SNMPScanner:
         self.nb_found = {}
         self.nb_scanned = {}
         self.ip = self.get_scanner_ip()
+        self.identifier = self.get_or_create_identifier()
+
+    def get_or_create_identifier(self):
+        """Get or create an identifier for the scanner."""
+        if self.identifier:
+            return self.identifier
+        else:
+            # if no identifier is found, create one and store it in the configuration file
+            identifier = str(uuid.uuid4())
+            config = configparser.ConfigParser()
+            config.read(DIR + '/config/scanner.conf')
+            config.set('scanner', 'identifier', identifier)
+            with open(DIR + '/config/scanner.conf', 'w') as configfile:
+                config.write(configfile)
+            return identifier
 
     def get_scanner_ip(self):
         """Get the local IP of the scanner."""
@@ -167,7 +183,7 @@ class SNMPScanner:
 
     def get_scanner_instance(self):
         """Get the scanner instance from the server, using scanner's name as unique identifier."""
-        url = self.base_url + self.scanner_endpoint + f"?name={self.identifier}"
+        url = self.base_url + self.scanner_endpoint + f"{self.identifier}"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Token {self.token}",
