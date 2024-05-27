@@ -1,7 +1,7 @@
 import configparser
 from datetime import datetime
 import socket
-from pysnmp.hlapi import getCmd, SnmpEngine, CommunityData, UdpTransportTarget, ContextData, ObjectType, ObjectIdentity, UsmUserData, usmDESPrivProtocol, usmAesCfb128Protocol
+from pysnmp.hlapi import *
 import ipaddress
 import json
 import logging
@@ -33,7 +33,8 @@ class SNMPScanner:
         logging.info("Starting SNMP scanner...")
         # endpoints
         self.auth_endpoint = "/api-auth/token"
-        self.config_endpoint = "/config/snmp/"
+        self.config_endpoint = "/snmp/config/"
+        self.snmp_enabled_endpoint = "/config/snmp/"
         self.asset_endpoint = "/asset/bases/"
         self.template_endpoint = "/templates/"
         self.asset_collection_endpoint = "/asset/collection/"
@@ -123,9 +124,22 @@ class SNMPScanner:
 
     def process_snmp_configs(self, configurations):
         """Process the SNMP configurations, matching configurations to the scanner's subnets."""
+        # TODO : SNMP configuration format has changed
         # is SNMP enabled on the server?
-        if configurations['value'][0]['value'] != 1:
-            logging.error("SNMP is not enabled on the server, exiting...")
+        check_enabled_url = self.base_url + self.snmp_enabled_endpoint
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Token {self.token}"}
+        response = requests.get(check_enabled_url, headers=headers)
+        if response.status_code == 200:
+            # check if snmp is enabled
+            if response.json()['value'][0]['value'] != 1:
+                logging.error("SNMP is not enabled on the server, exiting...")
+                exit()
+            else:
+                logging.info("SNMP is enabled on the server")
+        else:
+            logging.error(f"Failed to retrieve SNMP enabled status: {response.status_code}")
             exit()
 
         processed_configs = []
@@ -149,22 +163,20 @@ class SNMPScanner:
             logging.error("No subnets defined in local configuration or on the server, exiting...")
             exit()
 
-        # starting from the second element
-        for config_group in configurations['value'][1:]:
-            # each config to dictionary
-            config_dict = {config['name']: config['value'] for config in config_group}
-            # if the config['subnets'] contains one of the scanner's subnets
-            subnets = []
-            for scanner_subnet in self.targets:
-                if scanner_subnet in config_dict['subnets']:
-                    subnets.append(scanner_subnet)
-            if subnets:
-                config_dict['subnets'] = subnets
-                processed_configs.append(config_dict)
-            else:
-                # config does not apply to the scanner's subnets
-                continue
+        # getting configs from the server
+        # if we did get the scanner instance, we already have configs
+        if scanner.get('configs'):
+            configurations = scanner['configs']
+        else:
+            logging.error("No SNMP configurations found for the scanner instance, scan will not be performed.")
+            exit()
+        
+        for config in configurations:
+            # check if the configuration's subnets match the scanner's subnets
+            if set(config['subnets']).intersection(set(scanner.get('subnets'))):
+                processed_configs.append(config)
 
+            # TODO : come back here : check what goes into generated_ips_for_configs
             self.generate_ips_for_configs(processed_configs)
 
         if not processed_configs:
@@ -304,6 +316,11 @@ class SNMPScanner:
             privProtocol = usmDESPrivProtocol
         elif community['priv_protocol'] == 'AES':
             privProtocol = usmAesCfb128Protocol
+
+        if community['auth_protocol'] == 'MD5':
+            authProtocol = usmHMACMD5AuthProtocol
+        elif community['auth_protocol'] == 'SHA':
+            authProtocol = usmHMACSHAAuthProtocol
 
         if community['level'] == 'authNoPriv':
             errorIndication, errorStatus, errorIndex, varBinds = next(
