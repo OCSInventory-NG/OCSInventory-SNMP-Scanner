@@ -23,7 +23,7 @@ class SNMPScanner:
         - ONLINE: The scanner retrieves the SNMP configuration from the server and sends the results to the server
         - OFFLINE: The scanner uses a local configuration and stores the results locally
 
-    To determine which configuration to use, the scanner checks the server's SNMP configuration and the local configuration. 
+    To determine which configuration to use, the scanner checks the server's SNMP configuration and the local configuration.
     If the server's configuration is empty, the scanner uses the local configuration.
     """
     def __init__(self):
@@ -147,8 +147,6 @@ class SNMPScanner:
         scanner = self.get_scanner_instance()
         if not scanner:
             logging.info("Scanner instance not found, scan will be performed using the local targeted_subnets configuration. A SnmpScanner instance will be created at the end of the scan.")
-        else:
-            scanner = scanner[0]
 
         # if both scanner['subnets'] and self.targets are defined, server's configuration takes precedence
         if not scanner and self.targets:
@@ -165,12 +163,15 @@ class SNMPScanner:
 
         # getting configs from the server
         # if we did get the scanner instance, we already have configs
-        if scanner.get('configs'):
+        if scanner and scanner.get('configs'):
             configurations = scanner['configs']
         else:
             logging.error("No SNMP configurations found for the scanner instance, scan will not be performed.")
+            # we are not updating last scan date if no scan is performed
+            self.scan_date = None
+            self.update_or_create_scanner()
             exit()
-        
+
         for config in configurations:
             # check if the configuration's subnets match the scanner's subnets
             if set(config['subnets']).intersection(set(scanner.get('subnets'))):
@@ -204,7 +205,7 @@ class SNMPScanner:
         if response.status_code == 200 and response.json():
             logging.info("Scanner instance retrieved successfully from OCS server")
             return response.json()
-        elif response.status_code == 200 and not response.json():
+        elif response.status_code == 404:
             logging.info(f"Scanner instance not found with identifier {self.identifier}")
             return None
         else:
@@ -226,7 +227,7 @@ class SNMPScanner:
             "subnets": self.targets,
             "total_scanned": total_scanned,
             "total_found": total_found,
-            "last_scan_date": self.scan_date.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            "last_scan_date": None if not self.scan_date else self.scan_date.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         }
 
         response = requests.put(url, json=payload, headers=headers)
