@@ -361,7 +361,7 @@ class SNMPScanner:
         elif community["auth_protocol"] == "SHA":
             authProtocol = usmHMACSHAAuthProtocol
 
-        if community["level"] == "authNoPriv":
+        if community["auth_level"] == "authNoPriv":
             errorIndication, errorStatus, errorIndex, varBinds = next(
                 getCmd(
                     SnmpEngine(),
@@ -379,7 +379,7 @@ class SNMPScanner:
                     ObjectType(ObjectIdentity(oid)),
                 )
             )
-        elif community["level"] == "authPriv":
+        elif community["auth_level"] == "authPriv":
             errorIndication, errorStatus, errorIndex, varBinds = next(
                 getCmd(
                     SnmpEngine(),
@@ -399,11 +399,10 @@ class SNMPScanner:
                     ObjectType(ObjectIdentity(oid)),
                 )
             )
-        elif community["level"] == "noAuthNoPriv":
+        elif community["auth_level"] == "noAuthNoPriv":
             errorIndication, errorStatus, errorIndex, varBinds = next(
                 getCmd(
                     SnmpEngine(),
-                    UsmUserData(community["user"]),
                     UdpTransportTarget(
                         (ip, 161),
                         timeout=community["timeout"],
@@ -454,7 +453,7 @@ class SNMPScanner:
                                 varBind.prettyPrint().split("=")[1].strip()
                             )
                             found = True
-                        results[ip] = device_results
+                            results[ip] = device_results
                 if found:
                     self.nb_found += 1
 
