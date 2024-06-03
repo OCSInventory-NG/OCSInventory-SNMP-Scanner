@@ -253,11 +253,13 @@ class SNMPScanner:
             ),
         }
 
-        response = requests.put(url, json=payload, headers=headers)
+        response = requests.patch(url, json=payload, headers=headers)
         if response.status_code == 200:
             logging.info("Scanner instance updated successfully")
         elif response.status_code == 404:
             url = self.base_url + self.scanner_endpoint
+            # this is post so no issue creating a new scanner instance with empty configs
+            payload["configs"] = []
             response = requests.post(url, json=payload, headers=headers)
             if response.status_code == 200:
                 logging.info("Scanner instance created successfully")
