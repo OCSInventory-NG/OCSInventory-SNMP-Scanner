@@ -287,7 +287,7 @@ class SNMPScanner:
                 logging.info(
                     "SNMP configuration retrieved successfully from OCS server"
                 )
-                self.communities = self.process_snmp_configs(self.config)
+                self.configs = self.process_snmp_configs(self.config)
                 logging.info("SNMP configuration parsed successfully")
             else:
                 logging.error(
@@ -296,11 +296,15 @@ class SNMPScanner:
 
         if self.mode == "OFFLINE":
             logging.info("Operating in OFFLINE mode. Using local configuration.")
-            if os.path.exists(DIR + "/config/communities.json"):
-                with open(DIR + "/config/communities.json", "r") as file:
-                    self.communities = json.load(file)
-                    self.generate_ips_for_configs(self.communities)
-                    logging.info("Local SNMP configuration parsed successfully")
+            if os.path.exists(DIR + "/config/configs.json"):
+                try:
+                    with open(DIR + "/config/configs.json", "r") as file:
+                        self.configs = json.load(file)
+                        self.generate_ips_for_configs(self.configs)
+                        logging.info("Local SNMP configuration parsed successfully")
+                except Exception as e:
+                    logging.error(f"Failed to parse local configuration: {e}")
+                    exit()
             else:
                 logging.error("Local SNMP configuration not found, exiting...")
                 exit()
@@ -421,7 +425,7 @@ class SNMPScanner:
         """Scan the network for SNMP devices, based on fixed OIDs."""
         results = {}
         logging.info("Starting network scan...")
-        for community in self.communities:
+        for community in self.configs:
             for ip in community["ips"]:
                 logging.debug(
                     f"======== Scanning {ip} with community '{community['name']}' ========"
@@ -475,7 +479,7 @@ class SNMPScanner:
             # get rid of the template key (result is what we want to send to the server)
             result.pop("template")
 
-        for community in self.communities:
+        for community in self.configs:
             for ip in community["ips"]:
                 logging.debug(
                     f"======== Advance scanning {ip} with community '{community['name']}' ========"
