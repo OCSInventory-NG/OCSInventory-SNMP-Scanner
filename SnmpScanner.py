@@ -126,7 +126,6 @@ class SNMPScanner:
 
     def process_snmp_configs(self, configurations):
         """Process the SNMP configurations, matching configurations to the scanner's subnets."""
-        # TODO : SNMP configuration format has changed
         # is SNMP enabled on the server?
         check_enabled_url = self.base_url + self.snmp_enabled_endpoint
         headers = {
@@ -190,7 +189,6 @@ class SNMPScanner:
             if set(config["subnets"]).intersection(set(scanner.get("subnets"))):
                 processed_configs.append(config)
 
-            # TODO : come back here : check what goes into generated_ips_for_configs
             self.generate_ips_for_configs(processed_configs)
 
         if not processed_configs:
