@@ -50,8 +50,8 @@ class SNMPScanner:
             "srcmac": "1.3.6.1.2.1.2.2.1.6.1",
             "serial": "1.3.6.1.2.1.47.1.1.1.1.11.1",
         }
-        self.nb_found = {}
-        self.nb_scanned = {}
+        self.nb_found = 0
+        self.nb_scanned = 0
         self.ip = self.get_scanner_ip()
         self.identifier = self.get_or_create_identifier()
 
@@ -238,8 +238,8 @@ class SNMPScanner:
             "Content-Type": "application/json",
             "Authorization": f"Token {self.token}",
         }
-        total_found = sum(self.nb_found.values())
-        total_scanned = sum(self.nb_scanned.values())
+        total_found = self.nb_found
+        total_scanned = self.nb_scanned
         payload = {
             "identifier": self.identifier,
             "ip": self.ip,
@@ -421,13 +421,11 @@ class SNMPScanner:
         results = {}
         logging.info("Starting network scan...")
         for community in self.communities:
-            self.nb_found[community["name"]] = 0
-            self.nb_scanned[community["name"]] = 0
             for ip in community["ips"]:
                 logging.debug(
                     f"======== Scanning {ip} with community '{community['name']}' ========"
                 )
-                self.nb_scanned[community["name"]] += 1
+                self.nb_scanned += 1
                 device_results = {}
                 for name, oid in self.oids.items():
                     found = False
@@ -458,7 +456,7 @@ class SNMPScanner:
                             found = True
                         results[ip] = device_results
                 if found:
-                    self.nb_found[community["name"]] += 1
+                    self.nb_found += 1
 
         return results
 
