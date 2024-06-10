@@ -185,8 +185,12 @@ class SNMPScanner:
             exit()
 
         for config in configurations:
+            scanner_subnets = set(scanner.get("subnets"))
+            config_subnets = set(config["subnets"])
             # check if the configuration's subnets match the scanner's subnets
-            if set(config["subnets"]).intersection(set(scanner.get("subnets"))):
+            matching_subnets = scanner_subnets.intersection(config_subnets)
+            if matching_subnets:
+                config["subnets"] = matching_subnets
                 processed_configs.append(config)
 
             self.generate_ips_for_configs(processed_configs)
