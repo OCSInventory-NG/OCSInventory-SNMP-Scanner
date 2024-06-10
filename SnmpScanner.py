@@ -318,152 +318,94 @@ class SNMPScanner:
             network = ipaddress.ip_network(subnet)
             subnets.append(network)
         return subnets
+    
+    def snmp_scan(self, community, ip, oid, version, mode="snmpget"):
+        """Scan the network for SNMP devices."""
+        transport = UdpTransportTarget((ip, 161), timeout=community["timeout"], retries=community["retries"])
+        snmpCmd = getCmd if mode == "snmpget" else nextCmd
 
-    def snmpv1_scan(self, community, ip, oid):
-        """Scan the network for SNMPv1 devices."""
-        errorIndication, errorStatus, errorIndex, varBinds = next(
-            getCmd(
+        if version == "1":
+            community_data = CommunityData(community["name"], mpModel=0)
+        elif version == "2c":
+            community_data = CommunityData(community["name"], mpModel=1)
+        elif version == "3":
+            # validate SNMP v3 user parameters
+            user = community.get("user", "")
+            password = community.get("password", "")
+            priv_password = community.get("priv_password", "")
+
+            auth_protocol = usmHMACMD5AuthProtocol if community["auth_protocol"] == "MD5" else usmHMACSHAAuthProtocol
+            priv_protocol = usmDESPrivProtocol if community["priv_protocol"] == "DES" else usmAesCfb128Protocol
+            
+            if community["auth_level"] == "authNoPriv":
+                community_data = CommunityData(user, authKey=password, authProtocol=auth_protocol)
+            elif community["auth_level"] == "authPriv":
+                community_data = CommunityData(user, authKey=password, authProtocol=auth_protocol, privKey=priv_password, privProtocol=priv_protocol)
+            else:
+                community_data = CommunityData(user)
+
+        results = []
+        try:
+
+            iterator = snmpCmd(
                 SnmpEngine(),
-                CommunityData(community["name"], mpModel=0),
-                UdpTransportTarget(
-                    (ip, 161),
-                    timeout=community["timeout"],
-                    retries=community["retries"],
-                ),
+                community_data,
+                transport,
                 ContextData(),
                 ObjectType(ObjectIdentity(oid)),
+                lexicographicMode=False if mode == "snmpwalk" else True
             )
-        )
+            walk_result = []
+            for errorIndication, errorStatus, errorIndex, varBinds in iterator:
+                # if snmpwalk contains multiple OID-value pairs, build a string from it
+                if errorIndication:
+                    logging.debug(f"Error: {errorIndication}")
+                elif errorStatus:
+                    logging.debug(f"Error: {errorStatus.prettyPrint()}")
+                else:
+                    for varBind in varBinds:
+                        oid_str = str(varBind[0])
+                        value_str = varBind[1].prettyPrint()
 
-        return errorIndication, errorStatus, errorIndex, varBinds
+                        if mode == "snmpwalk":
+                            walk_result.append(value_str)
+                        else:
+                            results.append((oid_str, value_str))
 
-    def snmpv2c_scan(self, community, ip, oid):
-        """Scan the network for SNMPv2c devices."""
-        errorIndication, errorStatus, errorIndex, varBinds = next(
-            getCmd(
-                SnmpEngine(),
-                CommunityData(community["name"], mpModel=1),
-                UdpTransportTarget(
-                    (ip, 161),
-                    timeout=community["timeout"],
-                    retries=community["retries"],
-                ),
-                ContextData(),
-                ObjectType(ObjectIdentity(oid)),
-            )
-        )
+                    if mode == "snmpwalk":
+                        value_str = ', '.join(walk_result)
+                        results.append((oid_str, value_str))
+            
+            logging.debug(f"OID: {oid_str} - Value: {value_str}")
+        except Exception as e:
+            logging.exception(f"Exception occurred during SNMP scan: {str(e)}")
+            return None
 
-        return errorIndication, errorStatus, errorIndex, varBinds
-
-    def snmpv3_scan(self, community, ip, oid):
-        """Scan the network for SNMPv3 devices."""
-        authProtocol = None
-        privProtocol = None
-        if community["priv_protocol"] == "DES":
-            privProtocol = usmDESPrivProtocol
-        elif community["priv_protocol"] == "AES":
-            privProtocol = usmAesCfb128Protocol
-
-        if community["auth_protocol"] == "MD5":
-            authProtocol = usmHMACMD5AuthProtocol
-        elif community["auth_protocol"] == "SHA":
-            authProtocol = usmHMACSHAAuthProtocol
-
-        if community["auth_level"] == "authNoPriv":
-            errorIndication, errorStatus, errorIndex, varBinds = next(
-                getCmd(
-                    SnmpEngine(),
-                    UsmUserData(
-                        community["user"],
-                        authKey=community["password"],
-                        authProtocol=authProtocol,
-                    ),
-                    UdpTransportTarget(
-                        (ip, 161),
-                        timeout=community["timeout"],
-                        retries=community["retries"],
-                    ),
-                    ContextData(),
-                    ObjectType(ObjectIdentity(oid)),
-                )
-            )
-        elif community["auth_level"] == "authPriv":
-            errorIndication, errorStatus, errorIndex, varBinds = next(
-                getCmd(
-                    SnmpEngine(),
-                    UsmUserData(
-                        community["user"],
-                        authKey=community["password"],
-                        privKey=community["priv_password"],
-                        authProtocol=authProtocol,
-                        privProtocol=privProtocol,
-                    ),
-                    UdpTransportTarget(
-                        (ip, 161),
-                        timeout=community["timeout"],
-                        retries=community["retries"],
-                    ),
-                    ContextData(),
-                    ObjectType(ObjectIdentity(oid)),
-                )
-            )
-        elif community["auth_level"] == "noAuthNoPriv":
-            errorIndication, errorStatus, errorIndex, varBinds = next(
-                getCmd(
-                    SnmpEngine(),
-                    UdpTransportTarget(
-                        (ip, 161),
-                        timeout=community["timeout"],
-                        retries=community["retries"],
-                    ),
-                    ContextData(),
-                    ObjectType(ObjectIdentity(oid)),
-                )
-            )
-
-        return errorIndication, errorStatus, errorIndex, varBinds
+        return results
 
     def scan_network(self):
         """Scan the network for SNMP devices, based on fixed OIDs."""
         results = {}
         logging.info("Starting network scan...")
+        mode = "snmpget"
         for community in self.configs:
             for ip in community["ips"]:
                 logging.debug(
-                    f"======== Scanning {ip} with community '{community['name']}' ========"
+                    f"======== Scanning {ip} with community '{community['name']}' and version '{community['version']}' ========"
                 )
                 self.nb_scanned += 1
                 device_results = {}
                 for name, oid in self.oids.items():
-                    found = False
-                    logging.debug(f"Getting OID {oid}...")
-                    if community["version"] == "2c":
-                        errorIndication, errorStatus, errorIndex, varBinds = (
-                            self.snmpv2c_scan(community, ip, oid)
-                        )
-                    elif community["version"] == "1":
-                        errorIndication, errorStatus, errorIndex, varBinds = (
-                            self.snmpv1_scan(community, ip, oid)
-                        )
-                    elif community["version"] == "3":
-                        errorIndication, errorStatus, errorIndex, varBinds = (
-                            self.snmpv3_scan(community, ip, oid)
-                        )
+                    logging.debug(f"Getting OID {oid} with mode {mode}...")
+                    snmp_results = self.snmp_scan(community, ip, oid, community["version"], mode)
 
-                    if errorIndication:
-                        logging.debug(f"Error: {errorIndication}")
-                    elif errorStatus:
-                        logging.debug(f"Error: {errorStatus.prettyPrint()}")
+                    if snmp_results:
+                        for oid, value in snmp_results:
+                            device_results[name] = value
+                        results[ip] = device_results
+                        self.nb_found += 1
                     else:
-                        for varBind in varBinds:
-                            logging.debug(f"OID: {oid} - {varBind.prettyPrint()}")
-                            device_results[name] = (
-                                varBind.prettyPrint().split("=")[1].strip()
-                            )
-                            found = True
-                            results[ip] = device_results
-                if found:
-                    self.nb_found += 1
+                        logging.debug(f"No SNMP response received for OID {oid}.")
 
         return results
 
@@ -472,68 +414,53 @@ class SNMPScanner:
         advanced_results = {}
         template_oids = {}
         logging.info("Starting advanced scan based on templates...")
-        # check if the template is indeed an SNMP template and get the OIDs
         for result in self.formatted_results:
             if result["template"] and result["template"]["os"] == "SNMP":
                 template_oids[result["srcip"]] = self.decompose_template(
                     result["template"]
                 )
-            # get rid of the template key (result is what we want to send to the server)
             result.pop("template")
 
         for community in self.configs:
             for ip in community["ips"]:
                 logging.debug(
-                    f"======== Advance scanning {ip} with community '{community['name']}' ========"
+                    f"======== Advance scanning {ip} with community '{community['name']}' and version '{community['version']}' ========"
                 )
                 device_results = {}
                 if ip in template_oids:
                     for section_name, section in template_oids[ip].items():
-                        for name, oid in section.items():
-                            logging.debug(f"Getting OID {oid}...")
-                            if community["version"] == "2c":
-                                errorIndication, errorStatus, errorIndex, varBinds = (
-                                    self.snmpv2c_scan(community, ip, oid)
-                                )
-                            elif community["version"] == "1":
-                                errorIndication, errorStatus, errorIndex, varBinds = (
-                                    self.snmpv1_scan(community, ip, oid)
-                                )
-                            elif community["version"] == "3":
-                                errorIndication, errorStatus, errorIndex, varBinds = (
-                                    self.snmpv3_scan(community, ip, oid)
-                                )
+                        for dic in section:
+                            name = dic["name"]
+                            oid = dic["retrieval_value"]
+                            mode = dic["retrieval_method"]
+                            logging.debug(f"Getting OID {oid} with mode {mode}...")
+                            snmp_results = self.snmp_scan(community, ip, oid, community["version"], mode)
 
-                            if errorIndication:
-                                logging.error(f"Error: {errorIndication}")
-                            elif errorStatus:
-                                logging.error(f"Error: {errorStatus.prettyPrint()}")
-                            else:
-                                for varBind in varBinds:
-                                    logging.debug(
-                                        f"OID: {oid} - {varBind.prettyPrint()}"
-                                    )
-                                    value = varBind.prettyPrint().split("=")[1].strip()
-                                    # if same section name already exists, add the new value to it
+                            if snmp_results:
+                                for oid, value in snmp_results:
                                     if section_name in device_results:
-                                        # using the index 0 isnt an issue here bc we know there won't be more than one section
                                         device_results[section_name][0][name] = value
                                     else:
                                         device_results[section_name] = [{name: value}]
                                 advanced_results[ip] = device_results
+                            else:
+                                logging.debug(f"No SNMP response received for OID {oid}.")
 
         self.format_to_template(advanced_results)
-
         return advanced_results
 
     def decompose_template(self, data):
         # decomposed structure
         decomposed = {}
         for section in data["sections"]:
-            section_dict = {}
+            section_dict = []
             for field in section["fields"]:
+                field_dict = {}
                 # map the field name to its retrieval value
-                section_dict[field["name"]] = field["retrival_value"]
+                field_dict["name"] = field["name"]
+                field_dict["retrieval_value"] = field["retrival_value"]
+                field_dict["retrieval_method"] = field["options"]["snmp_mode"]
+                section_dict.append(field_dict)
 
             decomposed[section["name"]] = section_dict
 
