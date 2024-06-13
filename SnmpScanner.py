@@ -322,7 +322,7 @@ class SNMPScanner:
     def snmp_scan(self, community, ip, oid, version, mode="snmpget"):
         """Scan the network for SNMP devices."""
         transport = UdpTransportTarget((ip, 161), timeout=community["timeout"], retries=community["retries"])
-        snmpCmd = getCmd if mode == "snmpget" else nextCmd
+        snmpCmd = getCmd if mode == "SNMP_GET" else nextCmd
 
         if version == "1":
             community_data = CommunityData(community["name"], mpModel=0)
@@ -353,9 +353,8 @@ class SNMPScanner:
                 transport,
                 ContextData(),
                 ObjectType(ObjectIdentity(oid)),
-                lexicographicMode=False if mode == "snmpwalk" else True
+                lexicographicMode=False if mode == "SNMP_WALK" else True
             )
-            walk_result = []
             for errorIndication, errorStatus, errorIndex, varBinds in iterator:
                 # if snmpwalk contains multiple OID-value pairs, build a string from it
                 if errorIndication:
@@ -364,19 +363,12 @@ class SNMPScanner:
                     logging.debug(f"Error: {errorStatus.prettyPrint()}")
                 else:
                     for varBind in varBinds:
+                        # TODO : might need some treatment on the output to make it a human readable string (e.g. macs)
                         oid_str = str(varBind[0])
                         value_str = varBind[1].prettyPrint()
-
-                        if mode == "snmpwalk":
-                            walk_result.append(value_str)
-                        else:
-                            results.append((oid_str, value_str))
-
-                    if mode == "snmpwalk":
-                        value_str = ', '.join(walk_result)
                         results.append((oid_str, value_str))
-            
-            logging.debug(f"OID: {oid_str} - Value: {value_str}")
+                        logging.debug(f"OID: {oid_str} - Value: {value_str}")
+
         except Exception as e:
             logging.exception(f"Exception occurred during SNMP scan: {str(e)}")
             return None
@@ -387,7 +379,7 @@ class SNMPScanner:
         """Scan the network for SNMP devices, based on fixed OIDs."""
         results = {}
         logging.info("Starting network scan...")
-        mode = "snmpget"
+        mode = "SNMP_GET"
         for community in self.configs:
             for ip in community["ips"]:
                 logging.debug(
@@ -396,7 +388,7 @@ class SNMPScanner:
                 self.nb_scanned += 1
                 device_results = {}
                 for name, oid in self.oids.items():
-                    logging.debug(f"Getting OID {oid} with mode {mode}...")
+                    logging.debug(f"Scanning with mode {mode}...")
                     snmp_results = self.snmp_scan(community, ip, oid, community["version"], mode)
 
                     if snmp_results:
@@ -405,7 +397,7 @@ class SNMPScanner:
                         results[ip] = device_results
                         self.nb_found += 1
                     else:
-                        logging.debug(f"No SNMP response received for OID {oid}.")
+                        logging.debug(f"No SNMP response received")
 
         return results
 
@@ -429,22 +421,31 @@ class SNMPScanner:
                 device_results = {}
                 if ip in template_oids:
                     for section_name, section in template_oids[ip].items():
+                        logging.debug(f"Processing section {section_name}...")
                         for dic in section:
                             name = dic["name"]
                             oid = dic["retrieval_value"]
                             mode = dic["retrieval_method"]
-                            logging.debug(f"Getting OID {oid} with mode {mode}...")
+                            logging.debug(f"Scanning with mode {mode}...")
                             snmp_results = self.snmp_scan(community, ip, oid, community["version"], mode)
 
                             if snmp_results:
+                                index = 0
                                 for oid, value in snmp_results:
                                     if section_name in device_results:
-                                        device_results[section_name][0][name] = value
+                                        # use index of the value in snmp_results to keep track of the order
+                                        if index < len(device_results[section_name]):
+                                            device_results[section_name][index][name] = value
+                                            index += 1
+                                        else:
+                                            device_results[section_name].append({name: value})
+                                            index += 1
                                     else:
                                         device_results[section_name] = [{name: value}]
+                                        index += 1
                                 advanced_results[ip] = device_results
                             else:
-                                logging.debug(f"No SNMP response received for OID {oid}.")
+                                logging.debug("No SNMP response received")
 
         self.format_to_template(advanced_results)
         return advanced_results
@@ -459,7 +460,7 @@ class SNMPScanner:
                 # map the field name to its retrieval value
                 field_dict["name"] = field["name"]
                 field_dict["retrieval_value"] = field["retrival_value"]
-                field_dict["retrieval_method"] = field["options"]["snmp_mode"]
+                field_dict["retrieval_method"] = section["retrival_method"]
                 section_dict.append(field_dict)
 
             decomposed[section["name"]] = section_dict
