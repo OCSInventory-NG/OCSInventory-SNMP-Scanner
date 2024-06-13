@@ -388,7 +388,7 @@ class SNMPScanner:
                 self.nb_scanned += 1
                 device_results = {}
                 for name, oid in self.oids.items():
-                    logging.debug(f"Scanning with mode {mode}...")
+                    logging.debug(f"Scanning OID {oid} with mode {mode}")
                     snmp_results = self.snmp_scan(community, ip, oid, community["version"], mode)
 
                     if snmp_results:
@@ -426,7 +426,7 @@ class SNMPScanner:
                             name = dic["name"]
                             oid = dic["retrieval_value"]
                             mode = dic["retrieval_method"]
-                            logging.debug(f"Scanning with mode {mode}...")
+                            logging.debug(f"Scanning OID {oid} with mode {mode}")
                             snmp_results = self.snmp_scan(community, ip, oid, community["version"], mode)
 
                             if snmp_results:
