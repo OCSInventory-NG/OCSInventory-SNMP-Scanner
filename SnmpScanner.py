@@ -2,6 +2,7 @@ import configparser
 from datetime import datetime
 import socket
 from pysnmp.hlapi import *
+from pysnmp.smi import builder, view, compiler
 import ipaddress
 import json
 import logging
@@ -54,6 +55,10 @@ class SNMPScanner:
         self.nb_scanned = 0
         self.ip = self.get_scanner_ip()
         self.identifier = self.get_or_create_identifier()
+        self.mib_builder = builder.MibBuilder()
+        compiler.addMibCompiler(self.mib_builder, sources=[self.mibs_dir])
+        self.load_mib_dir(self.mibs_dir)
+        self.mib_view_controller = view.MibViewController(self.mib_builder)
 
     def get_or_create_identifier(self):
         """Get or create an identifier for the scanner."""
@@ -68,6 +73,24 @@ class SNMPScanner:
             with open(DIR + "/config/scanner.conf", "w") as configfile:
                 config.write(configfile)
             return identifier
+
+    def load_mib_dir(self, mib_path):
+        for root, dirs, files in os.walk(mib_path):
+            for file in files:
+                logging.debug(f"Loading MIB file: {file}")
+                mib_file = os.path.join(root, file)
+                self.load_mib_file(mib_file)
+
+            for dire in dirs:
+                logging.debug(f"Loading MIB directory: {dire}")
+                self.load_mib_dir(os.path.join(root, dire))
+
+    def load_mib_file(self, mib_file):
+        mib_name = os.path.splitext(os.path.basename(mib_file))[0]
+        try:
+            self.mib_builder.loadModules(mib_name)
+        except Exception as e:
+            logging.error(f"Error loading MIB {mib_name} from file {mib_file}: {e}")
 
     def get_scanner_ip(self):
         """Get the local IP of the scanner."""
@@ -92,6 +115,7 @@ class SNMPScanner:
             self.log_level = config.get("scanner", "log_level")
             self.targets = config.get("scanner", "targeted_subnets").split(",")
             self.identifier = config.get("scanner", "identifier")
+            self.mibs_dir = config.get("scanner", "mibs_dir")
 
     def get_auth_token(self, auth_data):
         """
@@ -363,11 +387,34 @@ class SNMPScanner:
                     logging.debug(f"Error: {errorStatus.prettyPrint()}")
                 else:
                     for varBind in varBinds:
-                        # TODO : might need some treatment on the output to make it a human readable string (e.g. macs)
-                        oid_str = str(varBind[0])
-                        value_str = varBind[1].prettyPrint()
-                        results.append((oid_str, value_str))
-                        logging.debug(f"OID: {oid_str} - Value: {value_str}")
+                        try:
+                            data_type = varBind[1].__class__.__name__
+                            oid_str = str(varBind[0])
+                            value_str = None
+                            if data_type == "OctetString":
+                                # mac address ?
+                                if len(varBind[1].asOctets()) == 6:
+                                    value_str = ':'.join(f'{b:02x}' for b in varBind[1].asOctets())
+                                else:
+                                    try:
+                                        value_str = varBind[1].asOctets().decode('utf-8')
+                                    except UnicodeDecodeError:
+                                        value_str = varBind[1].prettyPrint()
+                            # timeticks data type
+                            elif data_type == "TimeTicks":
+                                ticks = int(varBind[1])
+                                days, remain = divmod(ticks / 100, 86400)
+                                hours, remain = divmod(remain, 3600)
+                                minutes, seconds = divmod(remain, 60)
+                                value_str = f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
+                            else:
+                                value_str = varBind[1].prettyPrint()
+
+                            results.append((oid_str, value_str))
+                            logging.debug(f"OID: {oid_str} - Value: {value_str}")
+
+                        except Exception as e:
+                            logging.error(f"Failed to process varBind: {varBind}, Error: {e}")
 
         except Exception as e:
             logging.exception(f"Exception occurred during SNMP scan: {str(e)}")
