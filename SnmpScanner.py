@@ -75,6 +75,7 @@ class SNMPScanner:
             return identifier
 
     def load_mib_dir(self, mib_path):
+        """Load all MIB files in a directory."""
         for root, dirs, files in os.walk(mib_path):
             for file in files:
                 logging.debug(f"Loading MIB file: {file}")
@@ -86,6 +87,7 @@ class SNMPScanner:
                 self.load_mib_dir(os.path.join(root, dire))
 
     def load_mib_file(self, mib_file):
+        """Load a MIB file."""
         mib_name = os.path.splitext(os.path.basename(mib_file))[0]
         try:
             self.mib_builder.loadModules(mib_name)
@@ -277,6 +279,7 @@ class SNMPScanner:
                 if not self.scan_date
                 else self.scan_date.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             ),
+            "assets": self.assets
         }
 
         response = requests.patch(url, json=payload, headers=headers)
@@ -342,8 +345,8 @@ class SNMPScanner:
             network = ipaddress.ip_network(subnet)
             subnets.append(network)
         return subnets
-    
-    def snmp_scan(self, community, ip, oid, version, mode="snmpget"):
+
+    def snmp_scan(self, community, ip, oid, version, mode="SNMP_GET"):
         """Scan the network for SNMP devices."""
         transport = UdpTransportTarget((ip, 161), timeout=community["timeout"], retries=community["retries"])
         snmpCmd = getCmd if mode == "SNMP_GET" else nextCmd
@@ -370,7 +373,6 @@ class SNMPScanner:
 
         results = []
         try:
-
             iterator = snmpCmd(
                 SnmpEngine(),
                 community_data,
@@ -435,16 +437,19 @@ class SNMPScanner:
                 self.nb_scanned += 1
                 device_results = {}
                 for name, oid in self.oids.items():
-                    logging.debug(f"Scanning OID {oid} with mode {mode}")
+                    logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
                     snmp_results = self.snmp_scan(community, ip, oid, community["version"], mode)
 
                     if snmp_results:
                         for oid, value in snmp_results:
                             device_results[name] = value
                         results[ip] = device_results
-                        self.nb_found += 1
+
                     else:
                         logging.debug(f"No SNMP response received")
+
+        # count the number of devices found
+        self.nb_found = len(results)
 
         return results
 
@@ -473,7 +478,7 @@ class SNMPScanner:
                             name = dic["name"]
                             oid = dic["retrieval_value"]
                             mode = dic["retrieval_method"]
-                            logging.debug(f"Scanning OID {oid} with mode {mode}")
+                            logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
                             snmp_results = self.snmp_scan(community, ip, oid, community["version"], mode)
 
                             if snmp_results:
@@ -515,8 +520,8 @@ class SNMPScanner:
         return decomposed
 
     def send_to_ocs(self):
-        """Send formatted data to the server."""
         logging.info("Sending data to OCS...")
+        assets = []
         if self.mode == "ONLINE":
             url = self.base_url + self.asset_collection_endpoint
             headers = {
@@ -533,9 +538,10 @@ class SNMPScanner:
                     logging.debug(f"POSTing device : {device}")
 
                 if response.status_code in [200, 201]:
-                    logging.info(
-                        f"Device {device['uuid']} created/updated successfully"
-                    )
+                    logging.info(f"Device {device['uuid']} created/updated successfully")
+                    # keeping ids of created/updated assets to update scanner instance
+                    assets.append(response.json()["id"])
+
                 elif response.status_code not in [200, 201]:
                     logging.error(
                         f"Failed to create/update device {device['uuid']}: {response.status_code}"
@@ -546,6 +552,8 @@ class SNMPScanner:
                 f"Server is not reachable. Storing inventories locally and writing logs to {self.log_file}"
             )
             self.store_data_locally(self.formatted_results)
+
+        return assets
 
     def store_data_locally(self, data):
         """Store inventories locally, naming the files with the device's uuid."""
@@ -571,17 +579,16 @@ class SNMPScanner:
         """
         formatted_results = []
 
-        #  asset base
         base_template = {
             "name": "",
             "description": "",
-            "serial": "TEST",
+            "serial": "",
             "osname": "SNMP",
-            "osversion": "TEST",
+            "osversion": "",
             "uuid": "",
             "srcip": "",
-            "srcmac": "TEST",
-            "domain": "TEST",
+            "srcmac": "",
+            "domain": "",
         }
 
         for ip, device_results in results.items():
@@ -665,7 +672,7 @@ class SNMPScanner:
             # perform advanced scans based on templates
             self.advanced_results = self.advanced_scan()
             # sending inventory to OCS
-            self.send_to_ocs()
+            self.assets = self.send_to_ocs()
             logging.info(
                 f"Scan complete. Found a total of {len(self.formatted_results)} devices"
             )
