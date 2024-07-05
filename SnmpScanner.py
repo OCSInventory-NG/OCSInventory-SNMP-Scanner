@@ -59,6 +59,7 @@ class SNMPScanner:
         compiler.addMibCompiler(self.mib_builder, sources=[self.mibs_dir])
         self.load_mib_dir(self.mibs_dir)
         self.mib_view_controller = view.MibViewController(self.mib_builder)
+        self.assets = []
 
     def get_or_create_identifier(self):
         """Get or create an identifier for the scanner."""
