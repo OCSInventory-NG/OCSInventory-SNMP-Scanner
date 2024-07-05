@@ -14,7 +14,7 @@ In `offline` mode, the scanner only uses the base template and does not query th
 
 ### Scanning
 #### Supported SNMP versions
-The scanner supports SNMPv1, SNMPv2c and SNMPv3. The version to use is either specified in the configuration file 'communities.json' or in the configurations retrieved from the OCS server.
+The scanner supports SNMPv1, SNMPv2c and SNMPv3. The version to use is either specified in the configuration file 'configs.json' or in the configurations retrieved from the OCS server.
 
 #### Basic scan
 The basic scan is performed using a hardcoded base template corresponding to the InventoryBase model fields. The scanner purposefully uses generic OIDs to populate the fields, as the goal is to retrieve as much information as possible from the devices, regardless of their type. The basic scan is performed for all devices, regardless of whether or not a custom template is available for them.
@@ -45,7 +45,7 @@ A dedicated user must be created on the OCS server with appropriate permissions 
 - Delete : `Inventory - Asset`
 
 #### SNMP configuration (mandatory)
-SNMP must be enabled on the OCS server and at least one community must be defined. Within a community, targeted subnets can be defined. Configuration for one community is as follows:
+SNMP must be enabled on the OCS server and at least one SNMP configuration must be defined. Within a configuration, targeted subnets need to be defined. Configuration contains the following fields:
 - Name : name of the community
 - Version : SNMP version to use (v1, v2c or v3)
 - User : SNMP user to use (only for SNMPv3)
@@ -56,11 +56,17 @@ SNMP must be enabled on the OCS server and at least one community must be define
 - Privacy password : Privacy password to use (only for SNMPv3)
 - Retries : number of retries to perform when scanning a device
 - Timeout : timeout in seconds to wait for a response from a device
-- Subnets : list of subnets to scan, in CIDR notation. These will be matched against the Scanner's `subnets` field to determine if the scanner should use the community to scan a device
+- Subnets : list of subnets to scan, in CIDR notation. These will be matched against the Scanner's `subnets` field to determine if the scanner should use this configuration to scan a device
+
+> Configurations need to be assigned to the scanner in  OCS web interface. The scanner will use the `subnets` field to determine which configuration to use to scan which device.
 
 
 #### Scanner registration (automatic when using the `online` mode, optional when using the `offline` mode)
-Registration of the scanner is done automatically when using the `online` mode. The scanner will create its own instance in the OCS server's database during its first run. The entry will be created using the `identifier` and `subnets` set in the local configuration file. The `identifier` is a unique name for the scanner and the `subnets` is a list of subnets to scan. The scanner will also update its entry in the database at the end of each run, updating the `last_updated` and `last_scan` fields, as well as totals of scanned and found devices.
+Registration of the scanner is done automatically when using the `online` mode. The scanner will create its own instance in the OCS server's database during its first run. The entry will be created using the `identifier` and `subnets` set in the local configuration file. The `identifier` is a unique name for the scanner and the `subnets` is a list of subnets to scan. 
+
+Once registered, you will **need to assign SNMP configurations** (see previous step) to the scanner using the OCS server's web interface. The configurations will be used to scan the devices in the targeted subnets.
+
+The scanner will also update its entry in the database at the end of each run, updating the `last_updated` and `last_scan` fields, as well as totals of scanned and found devices.
 
 Please note : Configuration retrieved for the scanner from the OCS server will override the local configuration file. If you wish to run the scanner with its local configuration, switch to `offline` mode for a debug run or update the configuration on the OCS server.
 
@@ -68,6 +74,7 @@ Please note : Configuration retrieved for the scanner from the OCS server will o
 #### SNMP templates (optional)
 Custom templates can be defined for specific devices in the OCS server's web interface. The templates are used to perform an advanced scan of the devices, using specific OIDs to retrieve specific information. The templates are defined in the OCS server's web interface and can be affected to specific devices using `Rules`. The scanner will retrieve the template for a device if one is available and perform an advanced scan using the OIDs defined in the template.
 
+For template examples and instructions regarding building your own template, please refer to the [SNMP Template Creation](#SNMP-Template-Creation) section.
 
 
 ## Installation and Configuration
@@ -96,14 +103,17 @@ The `scanner.conf` file contains the following sections and fields:
 	- `identifier` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
 
 #### Running the scanner
-TODO : depends on how the module will run (service, cron job, etc.).
-At the moment, run the scanner using the following command:
+Run the scanner using the following command:
 ```bash
 python SnmpScanner.py
 ```
 
+The first run will create the scanner's instance in the OCS server's database.
+
+Make sure SNMP configurations are assigned to the scanner in the OCS server's web interface, otherwise the scanner will not be able to scan any devices.
+
 #### Results
-The scanner will output the results of the scan to the console, as well as write them to the OCS server's database. The results will be available in the OCS server's web interface under the `Inventory` tab.
+The scanner will output the results of the scan to the log file, as well as write them to the OCS server's database. The results will be available in the OCS server's web interface under the `Inventory` tab.
 
 ### OFFLINE Scanner installation and configuration
 #### Installation
@@ -114,7 +124,7 @@ The scanner will output the results of the scan to the console, as well as write
 pip install -r requirements.txt
 ```
 4. Edit the `config/scanner.conf` file to match your environment
-5. If using the `offline` mode, edit the `config/communities.json` file to match your SNMP configurations
+5. If using the `offline` mode, edit the `config/configs.json` file to match your SNMP configurations
 
 #### Configuration
 The `scanner.conf` file contains the following sections and fields:
@@ -130,7 +140,8 @@ The `scanner.conf` file contains the following sections and fields:
 	- `log_level` : the log level to use (INFO, DEBUG, WARNING, ERROR, CRITICAL)
 	- `identifier` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
 
-The `communities.json` JSON file contains the SNMP configurations for the scanner, it contains a list of communities. Refer to the [SNMP Configuration](#SNMP-configuration-(mandatory)) section for more information on the mandatory fields. By default, the file also contains default configurations that you can copy and modify. Multiple communities can be defined in the file, the scanner will use the `subnets` field to determine which community to use to scan a device.
+The `communities.json` JSON file contains the SNMP configurations for the scanner. Refer to the [SNMP Configuration](#SNMP-configuration-(mandatory)) section for more information on the mandatory fields. By default, the file also contains default configurations that you can copy and modify. Multiple communities can be defined in the file, the scanner will use the `subnets` field to determine which community to use to scan a device. 
+> Tip : the `/snmp/config/` API endpoint can be used to retrieve existing SNMP configurations from the OCS server and update the `configs.json` file.
 
 #### Running the scanner
 TODO : depends on how the module will run (service, cron job, etc.).
@@ -162,76 +173,125 @@ The scan is done in two steps:
 ### Local files
 In `offline` mode, the scanner stores the inventory data in individual files at the end of the scan. The files are named after the device's UUID and contain the inventory data in JSON format.
 The scanner reads its configuration from a file named `scanner.conf` located in the `config` directory. 
-SNMP configurations are read from a file named `communities.json` located in the same directory.
+SNMP configurations are read from a file named `configs.json` located in the same directory.
 Logs are written to a file named `snmp_scanner.log` located in the `logs` directory.
 
-## Example
-### SNMP template :
+## SNMP Template Creation
+### SNMP template example:
 NB : OIDs and names may not be relevant, this is just an example.
 ```json
-	{
-		"name": "SNMP_TEST",
-		"os": "SNMP",
-		"last_update": "2024-03-06T14:52:16.418214Z",
-		"sections": [
-			{
-				"name": "FIRMWARE",
-				"retrival_method": "OID",
-				"retrival_output": "JSON",
-				"target": "SNMP",
-				"fields": [
-					{
-						"name": "Location",
-						"retrival_value": "1.3.6.1.2.1.1.6.0",
-						"override_target": false,
-						"new_target": null,
-						"retrival_method": null,
-						"retrival_output": null,
-						"options": null
-					},
-					{
-						"name": "sysUptime",
-						"retrival_value": "1.3.6.1.2.1.1.3.0",
-						"override_target": false,
-						"new_target": null,
-						"retrival_method": null,
-						"retrival_output": null,
-						"options": null
-					}
-				],
-				"options": {
-					"need_format": false
-				}
-			},
-			{
-				"name": "HARDWARE",
-				"retrival_method": "OID",
-				"retrival_output": "JSON",
-				"target": "SNMP",
-				"fields": [
-					{
-						"name": "une adresse mail ?",
-						"retrival_value": "1.3.6.1.2.1.1.4.0",
-						"override_target": false,
-						"new_target": null,
-						"retrival_method": null,
-						"retrival_output": null,
-						"options": null
-					},
-					{
-						"name": "mac",
-						"retrival_value": "1.3.6.1.2.1.2.2.1.6.1",
-						"override_target": false,
-						"new_target": null,
-						"retrival_method": null,
-						"retrival_output": null,
-						"options": null
-					}
-				],
-				"options": {
-					"need_format": false
-				}
-			}
-		]
-	}
+{
+  "name": "SNMP_DEV",
+  "os": "SNMP",
+  "sections": [
+    {
+      "name": "INFORMATION",
+      "retrival_method": "SNMP_GET",
+      "retrival_output": "JSON",
+      "target": "SNMP",
+      "fields": [
+        {
+          "name": "Location",
+          "retrival_value": "1.3.6.1.2.1.1.6.0",
+          "override_target": false,
+          "new_target": null,
+          "retrival_method": null,
+          "retrival_output": null
+        },
+				{
+          "name": "sysUptime",
+          "retrival_value": "1.3.6.1.2.1.1.3.0",
+          "override_target": false,
+          "new_target": null,
+          "retrival_method": null,
+          "retrival_output": null
+        }
+      ],
+      "options": {
+        "need_format": false
+      }
+    },
+    {
+      "name": "INTERFACE",
+      "retrival_method": "SNMP_WALK",
+      "retrival_output": "JSON",
+      "target": "SNMP",
+      "fields": [
+				{
+          "name": "mac",
+          "retrival_value": "1.3.6.1.2.1.2.2.1.6",
+          "override_target": false,
+          "new_target": null,
+          "retrival_method": null,
+          "retrival_output": null
+        },
+				{
+          "name": "SPEED",
+          "retrival_value": "1.3.6.1.2.1.2.2.1.5",
+          "override_target": false,
+          "new_target": null,
+          "retrival_method": null,
+          "retrival_output": null
+        },
+				{
+          "name": "STATUS",
+          "retrival_value": "1.3.6.1.2.1.2.2.1.8",
+          "override_target": false,
+          "new_target": null,
+          "retrival_method": null,
+          "retrival_output": null
+        }
+      ],
+      "options": {
+        "need_format": false
+      }
+    },
+		    {
+      "name": "IP",
+      "retrival_method": "SNMP_WALK",
+      "retrival_output": "JSON",
+      "target": "SNMP",
+      "fields": [
+				{
+          "name": "IP",
+          "retrival_value": "1.3.6.1.2.1.4.20.1.1",
+          "override_target": false,
+          "new_target": null,
+          "retrival_method": null,
+          "retrival_output": null
+        },
+				{
+          "name": "NETMASK",
+          "retrival_value": "1.3.6.1.2.1.4.20.1.3",
+          "override_target": false,
+          "new_target": null,
+          "retrival_method": null,
+          "retrival_output": null
+        }
+      ],
+      "options": {
+        "need_format": false
+      }
+    }
+  ]
+}
 ```
+
+### SNMP retrieval methods
+Two methods can be used to retrieved data from OIDs:
+- SNMP WALK : Starting from a given OID, walk the SNMP tree and retrieve a list of data
+- SNMP GET : Get the value corresponding to the given OID
+
+In our template case, the `retrival_method` field is used to specify the method to use in the template section. If set to `SNMP_WALK`, the scanner will walk the SNMP tree starting from the `retrival_value` OID and retrieve the data, for all the fields in the section. If set to `SNMP_GET`, the scanner will retrieve the value corresponding to the `retrival_value` OID for each field in the section.
+
+In terms of output, this means that SNMP_WALK will output a list of items for a section, where SNMP_GET will output only one item. 
+In the example above, the INFORMATION section is set to use the SNMP_GET method, and the other two sections are set to use SNMP_WALK. 
+
+
+#### SNMP_WALK mode
+Starting from a given OID, walk the SNMP tree and retrieve a list of data
+> For this mode to work, we expect the OIDs used in a same section to belong to the same SNMP node and have the same indexes. In practice, this means that the indexes from the first OID being walked will be used for the rest of the fields. 
+
+
+#### SNMP_GET mode
+Get the value corresponding to the given OID
