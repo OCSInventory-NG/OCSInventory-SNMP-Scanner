@@ -1,7 +1,20 @@
 import configparser
 from datetime import datetime
 import socket
-from pysnmp.hlapi import *
+from pysnmp.hlapi import (
+    SnmpEngine,
+    CommunityData,
+    UdpTransportTarget,
+    ContextData,
+    ObjectType,
+    ObjectIdentity,
+    getCmd,
+    nextCmd,
+    usmHMACMD5AuthProtocol,
+    usmHMACSHAAuthProtocol,
+    usmDESPrivProtocol,
+    usmAesCfb128Protocol
+)
 from pysnmp.smi import builder, view, compiler
 import ipaddress
 import json
