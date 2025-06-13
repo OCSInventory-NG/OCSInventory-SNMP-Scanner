@@ -582,13 +582,12 @@ class SNMPScanner:
                         continue
 
                     if response.status_code in [200, 201]:
-                        logging.info(f"Device {device['uuid']} successfully {method.lower()}ed")
+                        logging.info(f"Device {device['uuid']} successfully {'created' if method == 'POST' else 'updated'}")
                         # keeping ids of created/updated assets to update scanner instance
-
                         assets.append(response.json()["id"])
                     else:
                         logging.error(
-                            f"Failed to {method.lower()} device {device['uuid']}. "
+                            f"Failed to {'create' if method == 'POST' else 'update'} device {device['uuid']}. "
                             f"Status: {response.status_code}, Response: {response.text}"
                         )
 
