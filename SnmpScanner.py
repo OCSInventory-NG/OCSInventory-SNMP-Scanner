@@ -548,8 +548,8 @@ class SNMPScanner:
                 field_dict = {}
                 # map the field name to its retrieval value
                 field_dict["name"] = field["name"]
-                field_dict["retrieval_value"] = field["retrival_value"]
-                field_dict["retrieval_method"] = section["retrival_method"]
+                field_dict["retrieval_value"] = field["retrieval_value"]
+                field_dict["retrieval_method"] = section["retrieval_method"]
                 section_dict.append(field_dict)
 
             decomposed[section["name"]] = section_dict
@@ -672,7 +672,6 @@ class SNMPScanner:
     def get_templates(self):
         """Retrieve the available templates from the server."""
         asset_url = self.base_url + self.asset_endpoint + "?uuid="
-        template_url = self.base_url + self.template_endpoint
         headers = {
             "Content-Type": "application/json",
             "Authorization": "Token " + self.token,
@@ -680,22 +679,14 @@ class SNMPScanner:
 
         for result in self.formatted_results:
             # check if the device exists already
-            url = asset_url + result["uuid"]
+            url = asset_url + result["uuid"] + "&expand=*"
             response = requests.get(url, headers=headers)
             if response.status_code == 200 and response.json():
                 existing_asset = response.json()[0]
                 result["method"] = "PUT"
                 # if a template has been assigned
                 if existing_asset.get("template"):
-                    url = template_url + str(existing_asset["template"])
-                    response = requests.get(url, headers=headers)
-                    if response.status_code == 200:
-                        result["template"] = response.json()
-                    else:
-                        logging.error(
-                            f"Failed to retrieve template: {response.status_code}"
-                        )
-                        result["template"] = None
+                    result["template"] = existing_asset["template"]
                 else:
                     logging.info(f"No template assigned to {result['uuid']}")
                     result["template"] = None
