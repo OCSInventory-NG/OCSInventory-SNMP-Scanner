@@ -44,10 +44,11 @@ class SNMPScanner:
     def __init__(self):
         self.read_config()
         self.log_file = DIR + "/logs/snmp_scanner.log"
+        os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
         logging.basicConfig(
             filename=self.log_file,
             level=self.log_level,
-            format="%(asctime)s - %(levelname)s - %(message)s",
+            format="%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s",
         )
         logging.info("Starting SNMP scanner...")
         # endpoints
@@ -134,22 +135,29 @@ class SNMPScanner:
             self.mibs_dir = config.get("scanner", "mibs_dir")
 
     def get_auth_token(self, auth_data):
-        """
-        Get the authentication token from OCS
-        """
-        url = self.base_url + self.auth_endpoint
-        payload = {"username": auth_data["username"], "password": auth_data["password"]}
-        headers = {"Content-Type": "application/json"}
-        response = requests.post(url, json=payload, headers=headers)
+        """Get the authentication token from OCS"""
+        try:
+            url = self.base_url + self.auth_endpoint
+            payload = {"username": auth_data["username"], "password": auth_data["password"]}
+            headers = {"Content-Type": "application/json"}
+            
+            logging.debug(f"Attempting authentication with username: {auth_data['username']}")
+            response = requests.post(url, json=payload, headers=headers)
 
-        if response.status_code == 200:
-            logging.info("Authentication token retrieved successfully")
-            self.token = response.json()["token"]
-            return True
-        else:
-            logging.error(
-                f"Failed to retrieve authentication token: {response.status_code}"
-            )
+            if response.status_code == 200:
+                self.token = response.json()["token"]
+                logging.info("Authentication token retrieved successfully")
+                return True
+            else:
+                logging.error(
+                    f"Failed to retrieve authentication token. Status: {response.status_code}, Response: {response.text}"
+                )
+                return False
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Network error during authentication: {str(e)}")
+            return False
+        except Exception as e:
+            logging.error(f"Unexpected error during authentication: {str(e)}")
             return False
 
     def check_server(self):
@@ -253,7 +261,7 @@ class SNMPScanner:
 
     def get_scanner_instance(self):
         """Get the scanner instance from the server, using scanner's name as unique identifier."""
-        url = self.base_url + self.scanner_endpoint + f"{self.identifier}"
+        url = self.base_url + self.scanner_endpoint + f"{self.identifier}" + "/?expand=*"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Token {self.token}",
@@ -362,46 +370,51 @@ class SNMPScanner:
 
     def snmp_scan(self, community, ip, oid, version, mode="SNMP_GET"):
         """Scan the network for SNMP devices."""
-        transport = UdpTransportTarget((ip, 161), timeout=community["timeout"], retries=community["retries"])
-        snmpCmd = getCmd if mode == "SNMP_GET" else nextCmd
-
-        if version == "1":
-            community_data = CommunityData(community["name"], mpModel=0)
-        elif version == "2c":
-            community_data = CommunityData(community["name"], mpModel=1)
-        elif version == "3":
-            # validate SNMP v3 user parameters
-            user = community.get("user", "")
-            password = community.get("password", "")
-            priv_password = community.get("priv_password", "")
-
-            auth_protocol = usmHMACMD5AuthProtocol if community["auth_protocol"] == "MD5" else usmHMACSHAAuthProtocol
-            priv_protocol = usmDESPrivProtocol if community["priv_protocol"] == "DES" else usmAesCfb128Protocol
-            
-            if community["auth_level"] == "authNoPriv":
-                community_data = CommunityData(user, authKey=password, authProtocol=auth_protocol)
-            elif community["auth_level"] == "authPriv":
-                community_data = CommunityData(user, authKey=password, authProtocol=auth_protocol, privKey=priv_password, privProtocol=priv_protocol)
-            else:
-                community_data = CommunityData(user)
-
-        results = []
         try:
-            iterator = snmpCmd(
-                SnmpEngine(),
-                community_data,
-                transport,
-                ContextData(),
-                ObjectType(ObjectIdentity(oid)),
-                lexicographicMode=False if mode == "SNMP_WALK" else True
-            )
-            for errorIndication, errorStatus, errorIndex, varBinds in iterator:
-                # if snmpwalk contains multiple OID-value pairs, build a string from it
-                if errorIndication:
-                    logging.debug(f"Error: {errorIndication}")
-                elif errorStatus:
-                    logging.debug(f"Error: {errorStatus.prettyPrint()}")
+            transport = UdpTransportTarget((ip, 161), timeout=community["timeout"], retries=community["retries"])
+            snmpCmd = getCmd if mode == "SNMP_GET" else nextCmd
+
+            logging.debug(f"Initializing SNMP scan for IP: {ip}, OID: {oid}, Version: {version}, Mode: {mode}")
+
+            if version == "1":
+                community_data = CommunityData(community["name"], mpModel=0)
+            elif version == "2c":
+                community_data = CommunityData(community["name"], mpModel=1)
+            elif version == "3":
+                # validate SNMP v3 user parameters
+                user = community.get("user", "")
+                password = community.get("password", "")
+                priv_password = community.get("priv_password", "")
+
+                auth_protocol = usmHMACMD5AuthProtocol if community["auth_protocol"] == "MD5" else usmHMACSHAAuthProtocol
+                priv_protocol = usmDESPrivProtocol if community["priv_protocol"] == "DES" else usmAesCfb128Protocol
+                
+                if community["auth_level"] == "authNoPriv":
+                    community_data = CommunityData(user, authKey=password, authProtocol=auth_protocol)
+                elif community["auth_level"] == "authPriv":
+                    community_data = CommunityData(user, authKey=password, authProtocol=auth_protocol, privKey=priv_password, privProtocol=priv_protocol)
                 else:
+                    community_data = CommunityData(user)
+
+            results = []
+            try:
+                iterator = snmpCmd(
+                    SnmpEngine(),
+                    community_data,
+                    transport,
+                    ContextData(),
+                    ObjectType(ObjectIdentity(oid)),
+                    lexicographicMode=False if mode == "SNMP_WALK" else True
+                )
+                
+                for errorIndication, errorStatus, errorIndex, varBinds in iterator:
+                    if errorIndication:
+                        logging.warning(f"SNMP error for IP {ip}: {errorIndication}")
+                        continue
+                    elif errorStatus:
+                        logging.warning(f"SNMP error status for IP {ip}: {errorStatus.prettyPrint()}")
+                        continue
+                    
                     for varBind in varBinds:
                         try:
                             data_type = varBind[1].__class__.__name__
@@ -427,16 +440,26 @@ class SNMPScanner:
                                 value_str = varBind[1].prettyPrint()
 
                             results.append((oid_str, value_str))
-                            logging.debug(f"OID: {oid_str} - Value: {value_str}")
+                            logging.debug(f"Successfully processed OID: {oid_str} - Value: {value_str}")
 
                         except Exception as e:
-                            logging.error(f"Failed to process varBind: {varBind}, Error: {e}")
+                            logging.error(f"Error processing varBind for IP {ip}: {str(e)}")
+                            continue
+
+            except Exception as e:
+                logging.error(f"SNMP command execution failed for IP {ip}: {str(e)}")
+                return None
+
+            if not results:
+                logging.debug(f"No results returned for IP {ip}, OID {oid}")
+            else:
+                logging.debug(f"Successfully retrieved {len(results)} results for IP {ip}, OID {oid}")
+                
+            return results
 
         except Exception as e:
-            logging.exception(f"Exception occurred during SNMP scan: {str(e)}")
+            logging.error(f"Critical error in SNMP scan for IP {ip}: {str(e)}")
             return None
-
-        return results
 
     def scan_network(self):
         """Scan the network for SNMP devices, based on fixed OIDs."""
@@ -534,38 +557,52 @@ class SNMPScanner:
         return decomposed
 
     def send_to_ocs(self):
-        logging.info("Sending data to OCS...")
+        """Send data to OCS server"""
+        logging.info("Starting data transmission to OCS...")
         assets = []
+        
         if self.mode == "ONLINE":
             url = self.base_url + self.asset_collection_endpoint
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Token {self.token}",
             }
+            
             for device in self.formatted_results:
-                method = device.pop("method")
-                if method == "PUT":
-                    response = requests.put(url, json=device, headers=headers)
-                    logging.debug(f"PUTing device : {device}")
-                elif method == "POST":
-                    response = requests.post(url, json=device, headers=headers)
-                    logging.debug(f"POSTing device : {device}")
+                try:
+                    method = device.pop("method")
+                    logging.debug(f"Processing device {device.get('uuid', 'unknown')} with method {method}")
+                    
+                    if method == "PUT":
+                        response = requests.put(url, json=device, headers=headers)
+                    elif method == "POST":
+                        response = requests.post(url, json=device, headers=headers)
+                    else:
+                        logging.error(f"Invalid method {method} for device {device.get('uuid', 'unknown')}")
+                        continue
 
-                if response.status_code in [200, 201]:
-                    logging.info(f"Device {device['uuid']} created/updated successfully")
-                    # keeping ids of created/updated assets to update scanner instance
-                    assets.append(response.json()["id"])
+                    if response.status_code in [200, 201]:
+                        logging.info(f"Device {device['uuid']} successfully {method.lower()}ed")
+                        # keeping ids of created/updated assets to update scanner instance
 
-                elif response.status_code not in [200, 201]:
-                    logging.error(
-                        f"Failed to create/update device {device['uuid']}: {response.status_code}"
-                    )
+                        assets.append(response.json()["id"])
+                    else:
+                        logging.error(
+                            f"Failed to {method.lower()} device {device['uuid']}. "
+                            f"Status: {response.status_code}, Response: {response.text}"
+                        )
+
+                except requests.exceptions.RequestException as e:
+                    logging.error(f"Network error while processing device {device.get('uuid', 'unknown')}: {str(e)}")
+                except Exception as e:
+                    logging.error(f"Unexpected error while processing device {device.get('uuid', 'unknown')}: {str(e)}")
 
         else:
-            logging.info(
-                f"Server is not reachable. Storing inventories locally and writing logs to {self.log_file}"
-            )
-            self.store_data_locally(self.formatted_results)
+            logging.info(f"Operating in OFFLINE mode. Storing data locally in {self.inventoy_dir}")
+            try:
+                self.store_data_locally(self.formatted_results)
+            except Exception as e:
+                logging.error(f"Failed to store data locally: {str(e)}")
 
         return assets
 
