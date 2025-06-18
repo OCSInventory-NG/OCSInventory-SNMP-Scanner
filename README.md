@@ -140,7 +140,7 @@ The `scanner.conf` file contains the following sections and fields:
 	- `log_level` : the log level to use (INFO, DEBUG, WARNING, ERROR, CRITICAL)
 	- `identifier` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
 
-The `communities.json` JSON file contains the SNMP configurations for the scanner. Refer to the [SNMP Configuration](#SNMP-configuration-(mandatory)) section for more information on the mandatory fields. By default, the file also contains default configurations that you can copy and modify. Multiple communities can be defined in the file, the scanner will use the `subnets` field to determine which community to use to scan a device. 
+The `configs.json` JSON file contains the SNMP configurations for the scanner. Refer to the [SNMP Configuration](#SNMP-configuration-(mandatory)) section for more information on the mandatory fields. By default, the file also contains default configurations that you can copy and modify. Multiple communities can be defined in the file, the scanner will use the `subnets` field to determine which community to use to scan a device. 
 > Tip : the `/snmp/config/` API endpoint can be used to retrieve existing SNMP configurations from the OCS server and update the `configs.json` file.
 
 #### Running the scanner
@@ -186,25 +186,25 @@ NB : OIDs and names may not be relevant, this is just an example.
   "sections": [
     {
       "name": "INFORMATION",
-      "retrival_method": "SNMP_GET",
-      "retrival_output": "JSON",
+      "retrieval_method": "SNMP_GET",
+      "retrieval_output": "JSON",
       "target": "SNMP",
       "fields": [
         {
           "name": "Location",
-          "retrival_value": "1.3.6.1.2.1.1.6.0",
+          "retrieval_value": "1.3.6.1.2.1.1.6.0",
           "override_target": false,
           "new_target": null,
-          "retrival_method": null,
-          "retrival_output": null
+          "retrieval_method": null,
+          "retrieval_output": null
         },
 				{
           "name": "sysUptime",
-          "retrival_value": "1.3.6.1.2.1.1.3.0",
+          "retrieval_value": "1.3.6.1.2.1.1.3.0",
           "override_target": false,
           "new_target": null,
-          "retrival_method": null,
-          "retrival_output": null
+          "retrieval_method": null,
+          "retrieval_output": null
         }
       ],
       "options": {
@@ -213,33 +213,33 @@ NB : OIDs and names may not be relevant, this is just an example.
     },
     {
       "name": "INTERFACE",
-      "retrival_method": "SNMP_WALK",
-      "retrival_output": "JSON",
+      "retrieval_method": "SNMP_WALK",
+      "retrieval_output": "JSON",
       "target": "SNMP",
       "fields": [
 				{
           "name": "mac",
-          "retrival_value": "1.3.6.1.2.1.2.2.1.6",
+          "retrieval_value": "1.3.6.1.2.1.2.2.1.6",
           "override_target": false,
           "new_target": null,
-          "retrival_method": null,
-          "retrival_output": null
+          "retrieval_method": null,
+          "retrieval_output": null
         },
 				{
           "name": "SPEED",
-          "retrival_value": "1.3.6.1.2.1.2.2.1.5",
+          "retrieval_value": "1.3.6.1.2.1.2.2.1.5",
           "override_target": false,
           "new_target": null,
-          "retrival_method": null,
-          "retrival_output": null
+          "retrieval_method": null,
+          "retrieval_output": null
         },
 				{
           "name": "STATUS",
-          "retrival_value": "1.3.6.1.2.1.2.2.1.8",
+          "retrieval_value": "1.3.6.1.2.1.2.2.1.8",
           "override_target": false,
           "new_target": null,
-          "retrival_method": null,
-          "retrival_output": null
+          "retrieval_method": null,
+          "retrieval_output": null
         }
       ],
       "options": {
@@ -248,25 +248,25 @@ NB : OIDs and names may not be relevant, this is just an example.
     },
 		    {
       "name": "IP",
-      "retrival_method": "SNMP_WALK",
-      "retrival_output": "JSON",
+      "retrieval_method": "SNMP_WALK",
+      "retrieval_output": "JSON",
       "target": "SNMP",
       "fields": [
 				{
           "name": "IP",
-          "retrival_value": "1.3.6.1.2.1.4.20.1.1",
+          "retrieval_value": "1.3.6.1.2.1.4.20.1.1",
           "override_target": false,
           "new_target": null,
-          "retrival_method": null,
-          "retrival_output": null
+          "retrieval_method": null,
+          "retrieval_output": null
         },
 				{
           "name": "NETMASK",
-          "retrival_value": "1.3.6.1.2.1.4.20.1.3",
+          "retrieval_value": "1.3.6.1.2.1.4.20.1.3",
           "override_target": false,
           "new_target": null,
-          "retrival_method": null,
-          "retrival_output": null
+          "retrieval_method": null,
+          "retrieval_output": null
         }
       ],
       "options": {
@@ -282,7 +282,7 @@ Two methods can be used to retrieved data from OIDs:
 - SNMP WALK : Starting from a given OID, walk the SNMP tree and retrieve a list of data
 - SNMP GET : Get the value corresponding to the given OID
 
-In our template case, the `retrival_method` field is used to specify the method to use in the template section. If set to `SNMP_WALK`, the scanner will walk the SNMP tree starting from the `retrival_value` OID and retrieve the data, for all the fields in the section. If set to `SNMP_GET`, the scanner will retrieve the value corresponding to the `retrival_value` OID for each field in the section.
+In our template case, the `retrieval_method` field is used to specify the method to use in the template section. If set to `SNMP_WALK`, the scanner will walk the SNMP tree starting from the `retrieval_value` OID and retrieve the data, for all the fields in the section. If set to `SNMP_GET`, the scanner will retrieve the value corresponding to the `retrieval_value` OID for each field in the section.
 
 In terms of output, this means that SNMP_WALK will output a list of items for a section, where SNMP_GET will output only one item. 
 In the example above, the INFORMATION section is set to use the SNMP_GET method, and the other two sections are set to use SNMP_WALK. 
