@@ -633,14 +633,16 @@ class SNMPScanner:
                         asset_id = response.json()["id"]
                         assets.append(asset_id)
                         # server logging
-                        self.server_logger(asset_id, "INFO", f"{'INVENTORY_BASE_INSERT' if method == 'POST' else 'INVENTORY_BASE_UPDATE'}", msg)
+                        self.server_logger(asset_id, "INFO",
+                                           f"{'INVENTORY_BASE_INSERT' if method == 'POST' else 'INVENTORY_BASE_UPDATE'}", msg)
                     else:
                         logging.error(
                             f"Failed to {'create' if method == 'POST' else 'update'} device {device['uuid']}. "
                             f"Status: {response.status_code}, Response: {response.text}"
                         )
-                        if method == "PUT":
-                            self.server_logger(asset_id, "ERROR", "INVENTORY_BASE_ERR", "Failed to update SNMP asset")
+
+                        self.server_logger(asset_id, "ERROR", "INVENTORY_BASE_ERR",
+                                           f"Failed to {'create' if method == 'POST' else 'update'} SNMP asset")
 
                 except requests.exceptions.RequestException as e:
                     logging.error(f"Network error while processing device {device.get('uuid', 'unknown')}: {str(e)}")
@@ -740,7 +742,7 @@ class SNMPScanner:
                     result["template"] = existing_asset["template"]
                 else:
                     logging.info(f"No template assigned to {result['uuid']}")
-                    self.server_logger(asset_id, "INFO", "INVENTORY_EXT_ERR", "No template assigned to SNMP asset")
+                    self.server_logger(asset_id, "DEBUG", "INVENTORY_EXT_ERR", "No template assigned to SNMP asset")
                     result["template"] = None
             else:
                 logging.info(
