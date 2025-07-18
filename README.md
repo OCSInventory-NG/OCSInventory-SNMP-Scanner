@@ -1,7 +1,7 @@
 # OCS SNMP Scanner
 
 ## Overview
-The SNMP Scanner is a tool that allows to scan a network for devices and retrieve information about them using the SNMP protocol. The scanner always uses an hardcoded base template (and matching generic OIDs) to retrieve information from the devices, and if available, performs an additional scan using a custom template retrieved from the OCS server.
+The SNMP Scanner is a tool designed to scan networks and collect device information using the SNMP protocol. The scanner always uses an hardcoded base template (and matching generic OIDs) to retrieve information from the devices, and if available, performs an additional scan using a custom template retrieved from the OCS server.
 
 ### Modes
 The scanner can operate in two modes: `online` and `offline`.
@@ -101,6 +101,10 @@ The `scanner.conf` file contains the following sections and fields:
 	- `targeted_subnets` : the subnets to scan, separated by commas no spaces, used in `offline` mode
 	- `log_level` : the log level to use (INFO, DEBUG, WARNING, ERROR, CRITICAL)
 	- `identifier` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
+  - `mibs_dir` : the MIB directory path
+  - `server_logging_enabled` : enable server logging or not. Not used in `offline` mode
+  - `server_log_level`: server log level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
+
 
 #### Running the scanner
 Run the scanner using the following command:
@@ -139,6 +143,9 @@ The `scanner.conf` file contains the following sections and fields:
 	- `targeted_subnets` : the subnets to scan, separated by commas no spaces, used in `offline` mode
 	- `log_level` : the log level to use (INFO, DEBUG, WARNING, ERROR, CRITICAL)
 	- `identifier` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
+  - `mibs_dir` : the MIB directory path
+  - `server_logging_enabled` : enable server logging or not. Not used in `offline` mode
+  - `server_log_level`: server log level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
 
 The `configs.json` JSON file contains the SNMP configurations for the scanner. Refer to the [SNMP Configuration](#SNMP-configuration-(mandatory)) section for more information on the mandatory fields. By default, the file also contains default configurations that you can copy and modify. Multiple communities can be defined in the file, the scanner will use the `subnets` field to determine which community to use to scan a device. 
 > Tip : the `/snmp/config/` API endpoint can be used to retrieve existing SNMP configurations from the OCS server and update the `configs.json` file.
