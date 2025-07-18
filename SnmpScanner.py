@@ -357,7 +357,7 @@ class SNMPScanner:
             # this is post so no issue creating a new scanner instance with empty configs
             payload["configs"] = []
             response = requests.post(url, json=payload, headers=headers)
-            if response.status_code == 200:
+            if response.status_code in [200, 201]:
                 logging.info("Scanner instance created successfully")
             else:
                 logging.error(
