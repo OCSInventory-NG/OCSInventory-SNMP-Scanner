@@ -74,6 +74,8 @@ class SNMPScanner:
         self.load_mib_dir(self.mibs_dir)
         self.mib_view_controller = view.MibViewController(self.mib_builder)
         self.assets = []
+        self.log_levels = {"CRITICAL": 0, "ERROR": 1, "WARNING": 2, "INFO": 3, "DEBUG": 4}
+
 
     def get_or_create_identifier(self):
         """Get or create an identifier for the scanner."""
@@ -133,6 +135,49 @@ class SNMPScanner:
             self.targets = config.get("scanner", "targeted_subnets").split(",")
             self.identifier = config.get("scanner", "identifier")
             self.mibs_dir = config.get("scanner", "mibs_dir")
+            self.server_logging_enabled = config.getboolean("scanner", "server_logging_enabled", fallback=False)
+            self.server_log_level = config.get("scanner", "server_log_level", fallback="WARNING").upper()
+
+    def server_logger(self, asset_id, log_level, scope, message):
+        """
+        Optionally send a log to the OCS server for a given asset and event.
+        Only sends if server_logging_enabled and in ONLINE mode.
+        """
+        if asset_id is None:
+            logging.warning("server_logger called with asset_id=None, skipping log send.")
+            return
+        logging.debug(f"server_logger called with asset_id={asset_id}, log_level={log_level}, scope={scope}, message={message}")
+        if not getattr(self, "server_logging_enabled", False):
+            logging.debug("Server logging is disabled by config.")
+            return
+        if getattr(self, "mode", "OFFLINE") != "ONLINE":
+            logging.debug("Server logging skipped: not in ONLINE mode.")
+            return
+        # check level
+        if self.log_levels[log_level] > self.log_levels.get(self.server_log_level, 2):
+            return
+        url = self.base_url + "/asset/logs/"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Token {self.token}",
+        }
+        payload = {
+            "asset": asset_id,
+            "scope": scope,
+            "comment": message,
+            "level": log_level
+        }
+        try:
+            logging.debug(f"Sending server log: {payload}")
+            response = requests.post(url, json=payload, headers=headers)
+            if response.status_code in [200, 201]:
+                logging.info(f"Server log sent for asset {asset_id} (scope: {scope}, level: {log_level})")
+            else:
+                logging.warning(f"Failed to send server log for asset {asset_id}: {response.status_code}, {response.text}")
+        except Exception as e:
+            logging.error(f"Exception while sending server log for asset {asset_id}: {e}")
+
+
 
     def get_auth_token(self, auth_data):
         """Get the authentication token from OCS"""
@@ -312,7 +357,7 @@ class SNMPScanner:
             # this is post so no issue creating a new scanner instance with empty configs
             payload["configs"] = []
             response = requests.post(url, json=payload, headers=headers)
-            if response.status_code == 200:
+            if response.status_code in [200, 201]:
                 logging.info("Scanner instance created successfully")
             else:
                 logging.error(
@@ -582,14 +627,22 @@ class SNMPScanner:
                         continue
 
                     if response.status_code in [200, 201]:
-                        logging.info(f"Device {device['uuid']} successfully {'created' if method == 'POST' else 'updated'}")
+                        msg = f"Device {device['uuid']} successfully {'created' if method == 'POST' else 'updated'}"
+                        logging.info(msg)
                         # keeping ids of created/updated assets to update scanner instance
-                        assets.append(response.json()["id"])
+                        asset_id = response.json()["id"]
+                        assets.append(asset_id)
+                        # server logging
+                        self.server_logger(asset_id, "INFO",
+                                           f"{'INVENTORY_BASE_INSERT' if method == 'POST' else 'INVENTORY_BASE_UPDATE'}", msg)
                     else:
                         logging.error(
                             f"Failed to {'create' if method == 'POST' else 'update'} device {device['uuid']}. "
                             f"Status: {response.status_code}, Response: {response.text}"
                         )
+
+                        self.server_logger(asset_id, "ERROR", "INVENTORY_BASE_ERR",
+                                           f"Failed to {'create' if method == 'POST' else 'update'} SNMP asset")
 
                 except requests.exceptions.RequestException as e:
                     logging.error(f"Network error while processing device {device.get('uuid', 'unknown')}: {str(e)}")
@@ -682,12 +735,14 @@ class SNMPScanner:
             response = requests.get(url, headers=headers)
             if response.status_code == 200 and response.json():
                 existing_asset = response.json()[0]
+                asset_id = response.json()[0]["id"]
                 result["method"] = "PUT"
                 # if a template has been assigned
                 if existing_asset.get("template"):
                     result["template"] = existing_asset["template"]
                 else:
                     logging.info(f"No template assigned to {result['uuid']}")
+                    self.server_logger(asset_id, "DEBUG", "INVENTORY_EXT_ERR", "No template assigned to SNMP asset")
                     result["template"] = None
             else:
                 logging.info(
