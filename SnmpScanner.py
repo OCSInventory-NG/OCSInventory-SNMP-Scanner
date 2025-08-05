@@ -16,6 +16,7 @@ from pysnmp.hlapi.asyncio import (
     usmAesCfb128Protocol
 )
 from pysnmp.smi import builder, view, compiler
+import asyncio
 import ipaddress
 import json
 import logging
@@ -413,10 +414,10 @@ class SNMPScanner:
             subnets.append(network)
         return subnets
 
-    def snmp_scan(self, community, ip, oid, version, mode="SNMP_GET"):
+    async def snmp_scan(self, community, ip, oid, version, mode="SNMP_GET"):
         """Scan the network for SNMP devices."""
         try:
-            transport = UdpTransportTarget((ip, 161), timeout=community["timeout"], retries=community["retries"])
+            transport = await UdpTransportTarget.create((ip, 161), community["timeout"], community["retries"])
             snmpCmd = get_cmd if mode == "SNMP_GET" else next_cmd
 
             logging.debug(f"Initializing SNMP scan for IP: {ip}, OID: {oid}, Version: {version}, Mode: {mode}")
@@ -443,7 +444,7 @@ class SNMPScanner:
 
             results = []
             try:
-                iterator = snmpCmd(
+                iterator = await snmpCmd(
                     SnmpEngine(),
                     community_data,
                     transport,
@@ -451,8 +452,10 @@ class SNMPScanner:
                     ObjectType(ObjectIdentity(oid)),
                     lexicographicMode=False if mode == "SNMP_WALK" else True
                 )
-                
+                logging.critical(iterator)
+
                 for errorIndication, errorStatus, errorIndex, varBinds in iterator:
+
                     if errorIndication:
                         logging.warning(f"SNMP error for IP {ip}: {errorIndication}")
                         continue
@@ -506,7 +509,7 @@ class SNMPScanner:
             logging.error(f"Critical error in SNMP scan for IP {ip}: {str(e)}")
             return None
 
-    def scan_network(self):
+    async def scan_network(self):
         """Scan the network for SNMP devices, based on fixed OIDs."""
         results = {}
         logging.info("Starting network scan...")
@@ -520,7 +523,7 @@ class SNMPScanner:
                 device_results = {}
                 for name, oid in self.oids.items():
                     logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
-                    snmp_results = self.snmp_scan(community, ip, oid, community["version"], mode)
+                    snmp_results = await self.snmp_scan(community, ip, oid, community["version"], mode)
 
                     if snmp_results:
                         for oid, value in snmp_results:
@@ -751,7 +754,7 @@ class SNMPScanner:
                 result["template"] = None
                 result["method"] = "POST"
 
-    def run(self):
+    async def run(self):
         """Main method to run the scanner."""
         # if the scanner is in ONLINE mode and the server is not reachable, switch to OFFLINE mode
         if self.mode == "ONLINE" and not self.check_server():
@@ -759,7 +762,7 @@ class SNMPScanner:
             self.mode = "OFFLINE"
         self.retrieve_snmp_configuration()
         # base scan
-        scan_results = self.scan_network()
+        scan_results = await self.scan_network()
         self.formatted_results = self.format_to_base(scan_results)
 
         if self.mode == "ONLINE":
@@ -784,5 +787,4 @@ class SNMPScanner:
 
 
 if __name__ == "__main__":
-    scanner = SNMPScanner()
-    scanner.run()
+    asyncio.run(SNMPScanner().run())
