@@ -1,15 +1,15 @@
 import configparser
 from datetime import datetime
 import socket
-from pysnmp.hlapi import (
+from pysnmp.hlapi.asyncio import (
     SnmpEngine,
     CommunityData,
     UdpTransportTarget,
     ContextData,
     ObjectType,
     ObjectIdentity,
-    getCmd,
-    nextCmd,
+    get_cmd,
+    next_cmd,
     usmHMACMD5AuthProtocol,
     usmHMACSHAAuthProtocol,
     usmDESPrivProtocol,
@@ -70,7 +70,7 @@ class SNMPScanner:
         self.ip = self.get_scanner_ip()
         self.identifier = self.get_or_create_identifier()
         self.mib_builder = builder.MibBuilder()
-        compiler.addMibCompiler(self.mib_builder, sources=[self.mibs_dir])
+        compiler.add_mib_compiler(self.mib_builder, sources=[self.mibs_dir])
         self.load_mib_dir(self.mibs_dir)
         self.mib_view_controller = view.MibViewController(self.mib_builder)
         self.assets = []
@@ -417,7 +417,7 @@ class SNMPScanner:
         """Scan the network for SNMP devices."""
         try:
             transport = UdpTransportTarget((ip, 161), timeout=community["timeout"], retries=community["retries"])
-            snmpCmd = getCmd if mode == "SNMP_GET" else nextCmd
+            snmpCmd = get_cmd if mode == "SNMP_GET" else next_cmd
 
             logging.debug(f"Initializing SNMP scan for IP: {ip}, OID: {oid}, Version: {version}, Mode: {mode}")
 
