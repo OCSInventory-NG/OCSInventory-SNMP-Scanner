@@ -444,55 +444,96 @@ class SNMPScanner:
 
             results = []
             try:
-                iterator = await snmpCmd(
-                    SnmpEngine(),
-                    community_data,
-                    transport,
-                    ContextData(),
-                    ObjectType(ObjectIdentity(oid)),
-                    lexicographicMode=False if mode == "SNMP_WALK" else True
-                )
-                logging.critical(iterator)
+                if mode == "SNMP_GET":
+                    error_indication, error_status, error_index, var_binds = await get_cmd(
+                        SnmpEngine(),
+                        community_data,
+                        transport,
+                        ContextData(),
+                        ObjectType(ObjectIdentity(oid))
+                    )
 
-                for errorIndication, errorStatus, errorIndex, varBinds in iterator:
-
-                    if errorIndication:
-                        logging.warning(f"SNMP error for IP {ip}: {errorIndication}")
-                        continue
-                    elif errorStatus:
-                        logging.warning(f"SNMP error status for IP {ip}: {errorStatus.prettyPrint()}")
-                        continue
-                    
-                    for varBind in varBinds:
-                        try:
-                            data_type = varBind[1].__class__.__name__
-                            oid_str = str(varBind[0])
-                            value_str = None
-                            if data_type == "OctetString":
-                                # mac address ?
-                                if len(varBind[1].asOctets()) == 6:
-                                    value_str = ':'.join(f'{b:02x}' for b in varBind[1].asOctets())
+                    if error_indication:
+                        print(f"SNMP error: {error_indication}")
+                    elif error_status:
+                        print(f"SNMP status error: {error_status.prettyPrint()}")
+                    else:
+                        for var_bind in var_binds:
+                            try:
+                                data_type = var_bind[1].__class__.__name__
+                                oid_str = str(var_bind[0])
+                                value_str = None
+                                if data_type == "OctetString":
+                                    # mac address ?
+                                    if len(var_bind[1].asOctets()) == 6:
+                                        value_str = ':'.join(f'{b:02x}' for b in var_bind[1].asOctets())
+                                    else:
+                                        try:
+                                            value_str = var_bind[1].asOctets().decode('utf-8')
+                                        except UnicodeDecodeError:
+                                            value_str = var_bind[1].prettyPrint()
+                                # timeticks data type
+                                elif data_type == "TimeTicks":
+                                    ticks = int(var_bind[1])
+                                    days, remain = divmod(ticks / 100, 86400)
+                                    hours, remain = divmod(remain, 3600)
+                                    minutes, seconds = divmod(remain, 60)
+                                    value_str = f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
                                 else:
-                                    try:
-                                        value_str = varBind[1].asOctets().decode('utf-8')
-                                    except UnicodeDecodeError:
-                                        value_str = varBind[1].prettyPrint()
-                            # timeticks data type
-                            elif data_type == "TimeTicks":
-                                ticks = int(varBind[1])
-                                days, remain = divmod(ticks / 100, 86400)
-                                hours, remain = divmod(remain, 3600)
-                                minutes, seconds = divmod(remain, 60)
-                                value_str = f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
-                            else:
-                                value_str = varBind[1].prettyPrint()
+                                    value_str = var_bind[1].prettyPrint()
 
-                            results.append((oid_str, value_str))
-                            logging.debug(f"Successfully processed OID: {oid_str} - Value: {value_str}")
+                                results.append((oid_str, value_str))
+                                logging.debug(f"Successfully processed OID: {oid_str} - Value: {value_str}")
 
-                        except Exception as e:
-                            logging.error(f"Error processing varBind for IP {ip}: {str(e)}")
-                            continue
+                            except Exception as e:
+                                logging.error(f"Error processing var_bind for IP {ip}: {str(e)}")
+                                continue
+                else:  # SNMP_WALK
+                    async for error_indication, error_status, error_index, var_binds in next_cmd(
+                        SnmpEngine(),
+                        community_data,
+                        transport,
+                        ContextData(),
+                        ObjectType(ObjectIdentity(oid)),
+                        lexicographicMode=False
+                    ):
+                        if error_indication:
+                            print(f"SNMP error: {error_indication}")
+                            break
+                        elif error_status:
+                            print(f"SNMP status error: {error_status.prettyPrint()}")
+                            break
+                        else:
+                            for var_bind in var_binds:
+                                try:
+                                    data_type = var_bind[1].__class__.__name__
+                                    oid_str = str(var_bind[0])
+                                    value_str = None
+                                    if data_type == "OctetString":
+                                        # mac address ?
+                                        if len(var_bind[1].asOctets()) == 6:
+                                            value_str = ':'.join(f'{b:02x}' for b in var_bind[1].asOctets())
+                                        else:
+                                            try:
+                                                value_str = var_bind[1].asOctets().decode('utf-8')
+                                            except UnicodeDecodeError:
+                                                value_str = var_bind[1].prettyPrint()
+                                    # timeticks data type
+                                    elif data_type == "TimeTicks":
+                                        ticks = int(var_bind[1])
+                                        days, remain = divmod(ticks / 100, 86400)
+                                        hours, remain = divmod(remain, 3600)
+                                        minutes, seconds = divmod(remain, 60)
+                                        value_str = f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
+                                    else:
+                                        value_str = var_bind[1].prettyPrint()
+
+                                    results.append((oid_str, value_str))
+                                    logging.debug(f"Successfully processed OID: {oid_str} - Value: {value_str}")
+
+                                except Exception as e:
+                                    logging.error(f"Error processing var_bind for IP {ip}: {str(e)}")
+                                    continue
 
             except Exception as e:
                 logging.error(f"SNMP command execution failed for IP {ip}: {str(e)}")
