@@ -418,7 +418,6 @@ class SNMPScanner:
         """Scan the network for SNMP devices."""
         try:
             transport = await UdpTransportTarget.create((ip, 161), community["timeout"], community["retries"])
-            snmpCmd = get_cmd if mode == "SNMP_GET" else next_cmd
 
             logging.debug(f"Initializing SNMP scan for IP: {ip}, OID: {oid}, Version: {version}, Mode: {mode}")
 
