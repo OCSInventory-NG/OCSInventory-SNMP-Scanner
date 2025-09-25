@@ -23,6 +23,9 @@ import logging
 import requests
 import os
 import uuid
+import tracemalloc
+tracemalloc.start()
+
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -453,9 +456,9 @@ class SNMPScanner:
                     )
 
                     if error_indication:
-                        print(f"SNMP error: {error_indication}")
+                        logging.error(f"SNMP error: {error_indication}")
                     elif error_status:
-                        print(f"SNMP status error: {error_status.prettyPrint()}")
+                        logging.error(f"SNMP status error: {error_status.prettyPrint()}")
                     else:
                         for var_bind in var_binds:
                             try:
@@ -488,19 +491,22 @@ class SNMPScanner:
                                 logging.error(f"Error processing var_bind for IP {ip}: {str(e)}")
                                 continue
                 else:  # SNMP_WALK
-                    async for error_indication, error_status, error_index, var_binds in next_cmd(
+
+                    next = next_cmd(
                         SnmpEngine(),
                         community_data,
                         transport,
                         ContextData(),
                         ObjectType(ObjectIdentity(oid)),
                         lexicographicMode=False
-                    ):
+                    )
+
+                    for error_indication, error_status, error_index, var_binds in await next:
                         if error_indication:
-                            print(f"SNMP error: {error_indication}")
+                            logging.error(f"SNMP error: {error_indication}")
                             break
                         elif error_status:
-                            print(f"SNMP status error: {error_status.prettyPrint()}")
+                            logging.error(f"SNMP status error: {error_status.prettyPrint()}")
                             break
                         else:
                             for var_bind in var_binds:
@@ -578,7 +584,7 @@ class SNMPScanner:
 
         return results
 
-    def advanced_scan(self):
+    async def advanced_scan(self):
         """Perform advanced scans based on the templates."""
         advanced_results = {}
         template_oids = {}
@@ -604,7 +610,7 @@ class SNMPScanner:
                             oid = dic["retrieval_value"]
                             mode = dic["retrieval_method"]
                             logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
-                            snmp_results = self.snmp_scan(community, ip, oid, community["version"], mode)
+                            snmp_results = await self.snmp_scan(community, ip, oid, community["version"], mode)
 
                             if snmp_results:
                                 index = 0
@@ -809,7 +815,7 @@ class SNMPScanner:
             # associate formatted results with their appropriate templates, based on their uuid
             self.get_templates()
             # perform advanced scans based on templates
-            self.advanced_results = self.advanced_scan()
+            self.advanced_results = await self.advanced_scan()
             # sending inventory to OCS
             self.assets = self.send_to_ocs()
             logging.info(
