@@ -23,8 +23,6 @@ import logging
 import requests
 import os
 import uuid
-import tracemalloc
-tracemalloc.start()
 
 
 DIR = os.path.dirname(os.path.abspath(__file__))
