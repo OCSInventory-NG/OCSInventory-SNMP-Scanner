@@ -1,27 +1,29 @@
 import configparser
 from datetime import datetime
 import socket
-from pysnmp.hlapi import (
+from pysnmp.hlapi.asyncio import (
     SnmpEngine,
     CommunityData,
     UdpTransportTarget,
     ContextData,
     ObjectType,
     ObjectIdentity,
-    getCmd,
-    nextCmd,
+    get_cmd,
+    next_cmd,
     usmHMACMD5AuthProtocol,
     usmHMACSHAAuthProtocol,
     usmDESPrivProtocol,
     usmAesCfb128Protocol
 )
 from pysnmp.smi import builder, view, compiler
+import asyncio
 import ipaddress
 import json
 import logging
 import requests
 import os
 import uuid
+
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -70,7 +72,7 @@ class SNMPScanner:
         self.ip = self.get_scanner_ip()
         self.identifier = self.get_or_create_identifier()
         self.mib_builder = builder.MibBuilder()
-        compiler.addMibCompiler(self.mib_builder, sources=[self.mibs_dir])
+        compiler.add_mib_compiler(self.mib_builder, sources=[self.mibs_dir])
         self.load_mib_dir(self.mibs_dir)
         self.mib_view_controller = view.MibViewController(self.mib_builder)
         self.assets = []
@@ -413,11 +415,10 @@ class SNMPScanner:
             subnets.append(network)
         return subnets
 
-    def snmp_scan(self, community, ip, oid, version, mode="SNMP_GET"):
+    async def snmp_scan(self, community, ip, oid, version, mode="SNMP_GET"):
         """Scan the network for SNMP devices."""
         try:
-            transport = UdpTransportTarget((ip, 161), timeout=community["timeout"], retries=community["retries"])
-            snmpCmd = getCmd if mode == "SNMP_GET" else nextCmd
+            transport = await UdpTransportTarget.create((ip, 161), community["timeout"], community["retries"])
 
             logging.debug(f"Initializing SNMP scan for IP: {ip}, OID: {oid}, Version: {version}, Mode: {mode}")
 
@@ -443,53 +444,99 @@ class SNMPScanner:
 
             results = []
             try:
-                iterator = snmpCmd(
-                    SnmpEngine(),
-                    community_data,
-                    transport,
-                    ContextData(),
-                    ObjectType(ObjectIdentity(oid)),
-                    lexicographicMode=False if mode == "SNMP_WALK" else True
-                )
-                
-                for errorIndication, errorStatus, errorIndex, varBinds in iterator:
-                    if errorIndication:
-                        logging.warning(f"SNMP error for IP {ip}: {errorIndication}")
-                        continue
-                    elif errorStatus:
-                        logging.warning(f"SNMP error status for IP {ip}: {errorStatus.prettyPrint()}")
-                        continue
-                    
-                    for varBind in varBinds:
-                        try:
-                            data_type = varBind[1].__class__.__name__
-                            oid_str = str(varBind[0])
-                            value_str = None
-                            if data_type == "OctetString":
-                                # mac address ?
-                                if len(varBind[1].asOctets()) == 6:
-                                    value_str = ':'.join(f'{b:02x}' for b in varBind[1].asOctets())
+                if mode == "SNMP_GET":
+                    error_indication, error_status, error_index, var_binds = await get_cmd(
+                        SnmpEngine(),
+                        community_data,
+                        transport,
+                        ContextData(),
+                        ObjectType(ObjectIdentity(oid))
+                    )
+
+                    if error_indication:
+                        logging.error(f"SNMP error: {error_indication}")
+                    elif error_status:
+                        logging.error(f"SNMP status error: {error_status.prettyPrint()}")
+                    else:
+                        for var_bind in var_binds:
+                            try:
+                                data_type = var_bind[1].__class__.__name__
+                                oid_str = str(var_bind[0])
+                                value_str = None
+                                if data_type == "OctetString":
+                                    # mac address ?
+                                    if len(var_bind[1].asOctets()) == 6:
+                                        value_str = ':'.join(f'{b:02x}' for b in var_bind[1].asOctets())
+                                    else:
+                                        try:
+                                            value_str = var_bind[1].asOctets().decode('utf-8')
+                                        except UnicodeDecodeError:
+                                            value_str = var_bind[1].prettyPrint()
+                                # timeticks data type
+                                elif data_type == "TimeTicks":
+                                    ticks = int(var_bind[1])
+                                    days, remain = divmod(ticks / 100, 86400)
+                                    hours, remain = divmod(remain, 3600)
+                                    minutes, seconds = divmod(remain, 60)
+                                    value_str = f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
                                 else:
-                                    try:
-                                        value_str = varBind[1].asOctets().decode('utf-8')
-                                    except UnicodeDecodeError:
-                                        value_str = varBind[1].prettyPrint()
-                            # timeticks data type
-                            elif data_type == "TimeTicks":
-                                ticks = int(varBind[1])
-                                days, remain = divmod(ticks / 100, 86400)
-                                hours, remain = divmod(remain, 3600)
-                                minutes, seconds = divmod(remain, 60)
-                                value_str = f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
-                            else:
-                                value_str = varBind[1].prettyPrint()
+                                    value_str = var_bind[1].prettyPrint()
 
-                            results.append((oid_str, value_str))
-                            logging.debug(f"Successfully processed OID: {oid_str} - Value: {value_str}")
+                                results.append((oid_str, value_str))
+                                logging.debug(f"Successfully processed OID: {oid_str} - Value: {value_str}")
 
-                        except Exception as e:
-                            logging.error(f"Error processing varBind for IP {ip}: {str(e)}")
-                            continue
+                            except Exception as e:
+                                logging.error(f"Error processing var_bind for IP {ip}: {str(e)}")
+                                continue
+                else:  # SNMP_WALK
+
+                    next = next_cmd(
+                        SnmpEngine(),
+                        community_data,
+                        transport,
+                        ContextData(),
+                        ObjectType(ObjectIdentity(oid)),
+                        lexicographicMode=False
+                    )
+
+                    for error_indication, error_status, error_index, var_binds in await next:
+                        if error_indication:
+                            logging.error(f"SNMP error: {error_indication}")
+                            break
+                        elif error_status:
+                            logging.error(f"SNMP status error: {error_status.prettyPrint()}")
+                            break
+                        else:
+                            for var_bind in var_binds:
+                                try:
+                                    data_type = var_bind[1].__class__.__name__
+                                    oid_str = str(var_bind[0])
+                                    value_str = None
+                                    if data_type == "OctetString":
+                                        # mac address ?
+                                        if len(var_bind[1].asOctets()) == 6:
+                                            value_str = ':'.join(f'{b:02x}' for b in var_bind[1].asOctets())
+                                        else:
+                                            try:
+                                                value_str = var_bind[1].asOctets().decode('utf-8')
+                                            except UnicodeDecodeError:
+                                                value_str = var_bind[1].prettyPrint()
+                                    # timeticks data type
+                                    elif data_type == "TimeTicks":
+                                        ticks = int(var_bind[1])
+                                        days, remain = divmod(ticks / 100, 86400)
+                                        hours, remain = divmod(remain, 3600)
+                                        minutes, seconds = divmod(remain, 60)
+                                        value_str = f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
+                                    else:
+                                        value_str = var_bind[1].prettyPrint()
+
+                                    results.append((oid_str, value_str))
+                                    logging.debug(f"Successfully processed OID: {oid_str} - Value: {value_str}")
+
+                                except Exception as e:
+                                    logging.error(f"Error processing var_bind for IP {ip}: {str(e)}")
+                                    continue
 
             except Exception as e:
                 logging.error(f"SNMP command execution failed for IP {ip}: {str(e)}")
@@ -506,7 +553,7 @@ class SNMPScanner:
             logging.error(f"Critical error in SNMP scan for IP {ip}: {str(e)}")
             return None
 
-    def scan_network(self):
+    async def scan_network(self):
         """Scan the network for SNMP devices, based on fixed OIDs."""
         results = {}
         logging.info("Starting network scan...")
@@ -520,7 +567,7 @@ class SNMPScanner:
                 device_results = {}
                 for name, oid in self.oids.items():
                     logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
-                    snmp_results = self.snmp_scan(community, ip, oid, community["version"], mode)
+                    snmp_results = await self.snmp_scan(community, ip, oid, community["version"], mode)
 
                     if snmp_results:
                         for oid, value in snmp_results:
@@ -535,7 +582,7 @@ class SNMPScanner:
 
         return results
 
-    def advanced_scan(self):
+    async def advanced_scan(self):
         """Perform advanced scans based on the templates."""
         advanced_results = {}
         template_oids = {}
@@ -561,7 +608,7 @@ class SNMPScanner:
                             oid = dic["retrieval_value"]
                             mode = dic["retrieval_method"]
                             logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
-                            snmp_results = self.snmp_scan(community, ip, oid, community["version"], mode)
+                            snmp_results = await self.snmp_scan(community, ip, oid, community["version"], mode)
 
                             if snmp_results:
                                 index = 0
@@ -751,7 +798,7 @@ class SNMPScanner:
                 result["template"] = None
                 result["method"] = "POST"
 
-    def run(self):
+    async def run(self):
         """Main method to run the scanner."""
         # if the scanner is in ONLINE mode and the server is not reachable, switch to OFFLINE mode
         if self.mode == "ONLINE" and not self.check_server():
@@ -759,14 +806,14 @@ class SNMPScanner:
             self.mode = "OFFLINE"
         self.retrieve_snmp_configuration()
         # base scan
-        scan_results = self.scan_network()
+        scan_results = await self.scan_network()
         self.formatted_results = self.format_to_base(scan_results)
 
         if self.mode == "ONLINE":
             # associate formatted results with their appropriate templates, based on their uuid
             self.get_templates()
             # perform advanced scans based on templates
-            self.advanced_results = self.advanced_scan()
+            self.advanced_results = await self.advanced_scan()
             # sending inventory to OCS
             self.assets = self.send_to_ocs()
             logging.info(
@@ -784,5 +831,4 @@ class SNMPScanner:
 
 
 if __name__ == "__main__":
-    scanner = SNMPScanner()
-    scanner.run()
+    asyncio.run(SNMPScanner().run())
