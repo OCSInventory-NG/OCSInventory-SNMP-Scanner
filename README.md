@@ -62,7 +62,7 @@ SNMP must be enabled on the OCS server and at least one SNMP configuration must 
 
 
 #### Scanner registration (automatic when using the `online` mode, optional when using the `offline` mode)
-Registration of the scanner is done automatically when using the `online` mode. The scanner will create its own instance in the OCS server's database during its first run. The entry will be created using the `identifier` and `subnets` set in the local configuration file. The `identifier` is a unique name for the scanner and the `subnets` is a list of subnets to scan. 
+Registration of the scanner is done automatically when using the `online` mode. The scanner will create its own instance in the OCS server's database during its first run. The entry will be created using the `name` and `subnets` set in the local configuration file. The `name` is a unique name for the scanner and the `subnets` is a list of subnets to scan. 
 
 Once registered, you will **need to assign SNMP configurations** (see previous step) to the scanner using the OCS server's web interface. The configurations will be used to scan the devices in the targeted subnets.
 
@@ -100,7 +100,7 @@ The `scanner.conf` file contains the following sections and fields:
 	- `local_inventory_dir` : the directory to store the inventory data in when running in `offline` mode
 	- `targeted_subnets` : the subnets to scan, separated by commas no spaces, used in `offline` mode
 	- `log_level` : the log level to use (INFO, DEBUG, WARNING, ERROR, CRITICAL)
-	- `identifier` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
+	- `name` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
   - `mibs_dir` : the MIB directory path
   - `server_logging_enabled` : enable server logging or not. Not used in `offline` mode
   - `server_log_level`: server log level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
@@ -142,7 +142,7 @@ The `scanner.conf` file contains the following sections and fields:
 	- `local_inventory_dir` : the directory to store the inventory data in when running in `offline` mode
 	- `targeted_subnets` : the subnets to scan, separated by commas no spaces, used in `offline` mode
 	- `log_level` : the log level to use (INFO, DEBUG, WARNING, ERROR, CRITICAL)
-	- `identifier` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
+	- `name` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
   - `mibs_dir` : the MIB directory path
   - `server_logging_enabled` : enable server logging or not. Not used in `offline` mode
   - `server_log_level`: server log level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
