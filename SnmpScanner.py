@@ -308,7 +308,7 @@ class SNMPScanner:
 
     def get_scanner_instance(self):
         """Get the scanner instance from the server, using scanner's name as unique identifier."""
-        url = self.base_url + self.scanner_endpoint + f"{self.identifier}" + "/?expand=*"
+        url = self.base_url + self.scanner_endpoint + f"?name={self.identifier}&expand=*"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Token {self.token}",
@@ -316,7 +316,7 @@ class SNMPScanner:
         response = requests.get(url, headers=headers)
         if response.status_code == 200 and response.json():
             logging.info("Scanner instance retrieved successfully from OCS server")
-            return response.json()
+            return response.json()[0]
         elif response.status_code == 404:
             logging.info(
                 f"Scanner instance not found with identifier {self.identifier}"
@@ -330,7 +330,12 @@ class SNMPScanner:
 
     def update_or_create_scanner(self):
         """Update or create the scanner instance on the server."""
-        url = self.base_url + self.scanner_endpoint + f"{self.identifier}/"
+        scanner = self.get_scanner_instance()
+        url = (
+            self.base_url + self.scanner_endpoint + f"{scanner['id']}/"
+            if scanner
+            else self.base_url + self.scanner_endpoint
+        )
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Token {self.token}",
@@ -338,7 +343,7 @@ class SNMPScanner:
         total_found = self.nb_found
         total_scanned = self.nb_scanned
         payload = {
-            "identifier": self.identifier,
+            "name": self.identifier,
             "ip": self.ip,
             "subnets": self.targets,
             "total_scanned": total_scanned,
@@ -351,12 +356,15 @@ class SNMPScanner:
             "assets": self.assets
         }
 
-        response = requests.patch(url, json=payload, headers=headers)
-        if response.status_code == 200:
-            logging.info("Scanner instance updated successfully")
-        elif response.status_code == 404:
-            url = self.base_url + self.scanner_endpoint
-            # this is post so no issue creating a new scanner instance with empty configs
+        if scanner:
+            response = requests.patch(url, json=payload, headers=headers)
+            if response.status_code == 200:
+                logging.info("Scanner instance updated successfully")
+            else:
+                logging.error(
+                    f"Failed to update scanner instance: {response.status_code}, reason: {response.json()}"
+                )
+        else:
             payload["configs"] = []
             response = requests.post(url, json=payload, headers=headers)
             if response.status_code in [200, 201]:
@@ -365,10 +373,6 @@ class SNMPScanner:
                 logging.error(
                     f"Failed to create scanner instance: {response.status_code}, reason: {response.json()}"
                 )
-        else:
-            logging.error(
-                f"Failed to update scanner instance: {response.status_code}, reason: {response.json()}"
-            )
 
     def retrieve_snmp_configuration(self):
         """Retrieve SNMP configuration from the server."""
