@@ -44,6 +44,7 @@ class SNMPScanner:
     """
 
     def __init__(self):
+        self.configs = None
         self.read_config()
         self.log_file = DIR + "/logs/snmp_scanner.log"
         os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
@@ -391,6 +392,7 @@ class SNMPScanner:
                 logging.error(
                     f"Failed to retrieve SNMP configuration: {response.status_code}"
                 )
+                self.configs = None
 
         if self.mode == "OFFLINE":
             logging.info("Operating in OFFLINE mode. Using local configuration.")
@@ -805,6 +807,12 @@ class SNMPScanner:
             logging.error("Server is not reachable, switching to OFFLINE mode...")
             self.mode = "OFFLINE"
         self.retrieve_snmp_configuration()
+        if not self.configs:
+            logging.error(
+                "No SNMP configuration loaded : Failed to retrieve SNMP configuration (403). Check OCS user permissions."
+            )
+            exit()
+
         # base scan
         scan_results = await self.scan_network()
         self.formatted_results = self.format_to_base(scan_results)
