@@ -70,7 +70,7 @@ class SNMPScanner:
         self.nb_found = 0
         self.nb_scanned = 0
         self.ip = self.get_scanner_ip()
-        self.identifier = self.get_or_create_identifier()
+        self.name = self.get_or_create_name()
         self.mib_builder = builder.MibBuilder()
         compiler.add_mib_compiler(self.mib_builder, sources=[self.mibs_dir])
         self.load_mib_dir(self.mibs_dir)
@@ -79,19 +79,19 @@ class SNMPScanner:
         self.log_levels = {"CRITICAL": 0, "ERROR": 1, "WARNING": 2, "INFO": 3, "DEBUG": 4}
 
 
-    def get_or_create_identifier(self):
-        """Get or create an identifier for the scanner."""
-        if self.identifier:
-            return self.identifier
+    def get_or_create_name(self):
+        """Get or create a name for the scanner."""
+        if self.name:
+            return self.name
         else:
-            # if no identifier is found, create one and store it in the configuration file
-            identifier = str(uuid.uuid4())
+            # if no name is found, create one and store it in the configuration file
+            name = str(uuid.uuid4())
             config = configparser.ConfigParser()
             config.read(DIR + "/config/scanner.conf")
-            config.set("scanner", "identifier", identifier)
+            config.set("scanner", "name", name)
             with open(DIR + "/config/scanner.conf", "w") as configfile:
                 config.write(configfile)
-            return identifier
+            return name
 
     def load_mib_dir(self, mib_path):
         """Load all MIB files in a directory."""
@@ -135,7 +135,7 @@ class SNMPScanner:
             self.inventoy_dir = DIR + "/" + config.get("scanner", "local_inventory_dir")
             self.log_level = config.get("scanner", "log_level")
             self.targets = config.get("scanner", "targeted_subnets").split(",")
-            self.identifier = config.get("scanner", "identifier")
+            self.name = config.get("scanner", "name")
             self.mibs_dir = config.get("scanner", "mibs_dir")
             self.server_logging_enabled = config.getboolean("scanner", "server_logging_enabled", fallback=False)
             self.server_log_level = config.get("scanner", "server_log_level", fallback="WARNING").upper()
@@ -307,8 +307,8 @@ class SNMPScanner:
                 config["ips"] += [str(ip) for ip in network.hosts()]
 
     def get_scanner_instance(self):
-        """Get the scanner instance from the server, using scanner's name as unique identifier."""
-        url = self.base_url + self.scanner_endpoint + f"{self.identifier}" + "/?expand=*"
+        """Get the scanner instance from the server, using scanner's name."""
+        url = self.base_url + self.scanner_endpoint + f"?name={self.name}&expand=*"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Token {self.token}",
@@ -316,10 +316,10 @@ class SNMPScanner:
         response = requests.get(url, headers=headers)
         if response.status_code == 200 and response.json():
             logging.info("Scanner instance retrieved successfully from OCS server")
-            return response.json()
+            return response.json()[0]
         elif response.status_code == 404:
             logging.info(
-                f"Scanner instance not found with identifier {self.identifier}"
+                f"Scanner instance not found with name {self.name}"
             )
             return None
         else:
@@ -330,7 +330,12 @@ class SNMPScanner:
 
     def update_or_create_scanner(self):
         """Update or create the scanner instance on the server."""
-        url = self.base_url + self.scanner_endpoint + f"{self.identifier}/"
+        scanner = self.get_scanner_instance()
+        url = (
+            self.base_url + self.scanner_endpoint + f"{scanner['id']}/"
+            if scanner
+            else self.base_url + self.scanner_endpoint
+        )
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Token {self.token}",
@@ -338,7 +343,7 @@ class SNMPScanner:
         total_found = self.nb_found
         total_scanned = self.nb_scanned
         payload = {
-            "identifier": self.identifier,
+            "name": self.name,
             "ip": self.ip,
             "subnets": self.targets,
             "total_scanned": total_scanned,
@@ -351,12 +356,15 @@ class SNMPScanner:
             "assets": self.assets
         }
 
-        response = requests.patch(url, json=payload, headers=headers)
-        if response.status_code == 200:
-            logging.info("Scanner instance updated successfully")
-        elif response.status_code == 404:
-            url = self.base_url + self.scanner_endpoint
-            # this is post so no issue creating a new scanner instance with empty configs
+        if scanner:
+            response = requests.patch(url, json=payload, headers=headers)
+            if response.status_code == 200:
+                logging.info("Scanner instance updated successfully")
+            else:
+                logging.error(
+                    f"Failed to update scanner instance: {response.status_code}, reason: {response.json()}"
+                )
+        else:
             payload["configs"] = []
             response = requests.post(url, json=payload, headers=headers)
             if response.status_code in [200, 201]:
@@ -365,10 +373,6 @@ class SNMPScanner:
                 logging.error(
                     f"Failed to create scanner instance: {response.status_code}, reason: {response.json()}"
                 )
-        else:
-            logging.error(
-                f"Failed to update scanner instance: {response.status_code}, reason: {response.json()}"
-            )
 
     def retrieve_snmp_configuration(self):
         """Retrieve SNMP configuration from the server."""
