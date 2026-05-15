@@ -39,7 +39,7 @@ In the `online` mode the scanner requires specific configuration on the OCS serv
 
 #### User creation (mandatory)
 A dedicated user must be created on the OCS server with appropriate permissions to query the API. The user must be created in the OCS server's web interface and must have the following permissions:
-- View : `Inventory - Asset`, `Templates`, `SNMP Scanner`, `Configuration - General`
+- View : `Inventory - Asset`, `Templates`, `SNMP Scanner`, `Configuration - General`, `SNMP Communities`
 - Add : `Inventory - Asset`, `SNMP Scanner`
 - Change : `Inventory - Asset`, `SNMP Scanner`
 - Delete : `Inventory - Asset`
