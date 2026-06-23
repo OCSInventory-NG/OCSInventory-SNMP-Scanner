@@ -26,6 +26,7 @@ import uuid
 
 
 DIR = os.path.dirname(os.path.abspath(__file__))
+VERSION = "3.0.0"
 
 
 class SNMPScanner:
@@ -53,7 +54,7 @@ class SNMPScanner:
             level=self.log_level,
             format="%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s",
         )
-        logging.info("Starting SNMP scanner...")
+        logging.info(f"Starting SNMP scanner v{VERSION}...")
         # endpoints
         self.auth_endpoint = "/api-auth/token"
         self.config_endpoint = "/snmp/config/"
