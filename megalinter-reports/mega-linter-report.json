@@ -1,0 +1,452 @@
+{
+    "file_extensions": [
+        ".py",
+        ".pyi",
+        ".ipynb",
+        ".pyx",
+        ".pxd",
+        ".yml",
+        ".yaml"
+    ],
+    "file_names_regex": [],
+    "has_updated_sources": 1,
+    "linters": [
+        {
+            "descriptor_id": "ACTION",
+            "descriptor_type": "tooling_format",
+            "elapsed_time_s": 0.030003784999991012,
+            "files": [
+                ".github/workflows/mega-linter.yml"
+            ],
+            "files_lint_results": [
+                {
+                    "errors_number": null,
+                    "file": ".github/workflows/mega-linter.yml",
+                    "fixed": false,
+                    "status": null,
+                    "status_code": null,
+                    "stdout": null,
+                    "warnings_number": null
+                }
+            ],
+            "files_number": 1,
+            "is_active": true,
+            "linter_name": "actionlint",
+            "name": "ACTION_ACTIONLINT",
+            "number_errors": 0,
+            "number_fixed": 0,
+            "return_code": 0,
+            "status": "success",
+            "total_number_errors": 0,
+            "total_number_warnings": 0
+        },
+        {
+            "descriptor_id": "PYTHON",
+            "descriptor_type": "language",
+            "elapsed_time_s": 2.097046780999989,
+            "files": [
+                "SnmpScanner.py"
+            ],
+            "files_lint_results": [
+                {
+                    "errors_number": null,
+                    "file": "SnmpScanner.py",
+                    "fixed": false,
+                    "status": null,
+                    "status_code": null,
+                    "stdout": null,
+                    "warnings_number": null
+                }
+            ],
+            "files_number": 1,
+            "is_active": true,
+            "linter_name": "black",
+            "name": "PYTHON_BLACK",
+            "number_errors": 0,
+            "number_fixed": 0,
+            "return_code": 0,
+            "status": "success",
+            "total_number_errors": 0,
+            "total_number_warnings": 0
+        },
+        {
+            "descriptor_id": "PYTHON",
+            "descriptor_type": "language",
+            "elapsed_time_s": 0.9960952539999965,
+            "files": [
+                "SnmpScanner.py"
+            ],
+            "files_lint_results": [
+                {
+                    "errors_number": null,
+                    "file": "SnmpScanner.py",
+                    "fixed": false,
+                    "status": null,
+                    "status_code": null,
+                    "stdout": null,
+                    "warnings_number": null
+                }
+            ],
+            "files_number": 1,
+            "is_active": true,
+            "linter_name": "flake8",
+            "name": "PYTHON_FLAKE8",
+            "number_errors": 0,
+            "number_fixed": 0,
+            "return_code": 0,
+            "status": "success",
+            "total_number_errors": 0,
+            "total_number_warnings": 0
+        },
+        {
+            "descriptor_id": "PYTHON",
+            "descriptor_type": "language",
+            "elapsed_time_s": 0.47095169099999623,
+            "files": [
+                "SnmpScanner.py"
+            ],
+            "files_lint_results": [
+                {
+                    "errors_number": null,
+                    "file": "SnmpScanner.py",
+                    "fixed": false,
+                    "status": null,
+                    "status_code": null,
+                    "stdout": null,
+                    "warnings_number": null
+                }
+            ],
+            "files_number": 1,
+            "is_active": true,
+            "linter_name": "isort",
+            "name": "PYTHON_ISORT",
+            "number_errors": 0,
+            "number_fixed": 0,
+            "return_code": 0,
+            "status": "success",
+            "total_number_errors": 0,
+            "total_number_warnings": 0
+        },
+        {
+            "descriptor_id": "PYTHON",
+            "descriptor_type": "language",
+            "elapsed_time_s": 0.029996771000000422,
+            "files": [
+                "SnmpScanner.py"
+            ],
+            "files_lint_results": [
+                {
+                    "errors_number": null,
+                    "file": "SnmpScanner.py",
+                    "fixed": false,
+                    "status": null,
+                    "status_code": null,
+                    "stdout": null,
+                    "warnings_number": null
+                }
+            ],
+            "files_number": 1,
+            "is_active": true,
+            "linter_name": "ruff",
+            "name": "PYTHON_RUFF",
+            "number_errors": 0,
+            "number_fixed": 0,
+            "return_code": 0,
+            "status": "success",
+            "total_number_errors": 0,
+            "total_number_warnings": 0
+        },
+        {
+            "descriptor_id": "REPOSITORY",
+            "descriptor_type": "other",
+            "elapsed_time_s": 18.933905042999996,
+            "files": [],
+            "files_lint_results": [],
+            "files_number": 0,
+            "is_active": true,
+            "linter_name": "checkov",
+            "name": "REPOSITORY_CHECKOV",
+            "number_errors": 0,
+            "number_fixed": 0,
+            "return_code": 0,
+            "status": "success",
+            "total_number_errors": 0,
+            "total_number_warnings": 0
+        },
+        {
+            "descriptor_id": "REPOSITORY",
+            "descriptor_type": "other",
+            "elapsed_time_s": 0.3169897360000107,
+            "files": [],
+            "files_lint_results": [],
+            "files_number": 0,
+            "is_active": true,
+            "linter_name": "gitleaks",
+            "name": "REPOSITORY_GITLEAKS",
+            "number_errors": 0,
+            "number_fixed": 0,
+            "return_code": 0,
+            "status": "success",
+            "total_number_errors": 0,
+            "total_number_warnings": 0
+        },
+        {
+            "descriptor_id": "REPOSITORY",
+            "descriptor_type": "other",
+            "elapsed_time_s": 0.008734489000005397,
+            "files": [],
+            "files_lint_results": [],
+            "files_number": 0,
+            "is_active": true,
+            "linter_name": "git_diff",
+            "name": "REPOSITORY_GIT_DIFF",
+            "number_errors": 0,
+            "number_fixed": 0,
+            "return_code": 0,
+            "status": "success",
+            "total_number_errors": 0,
+            "total_number_warnings": 0
+        },
+        {
+            "descriptor_id": "REPOSITORY",
+            "descriptor_type": "other",
+            "elapsed_time_s": 49.520051598999984,
+            "files": [],
+            "files_lint_results": [],
+            "files_number": 0,
+            "is_active": true,
+            "linter_name": "grype",
+            "name": "REPOSITORY_GRYPE",
+            "number_errors": 0,
+            "number_fixed": 0,
+            "return_code": 0,
+            "status": "success",
+            "total_number_errors": 0,
+            "total_number_warnings": 0
+        },
+        {
+            "descriptor_id": "REPOSITORY",
+            "descriptor_type": "other",
+            "elapsed_time_s": 1.9517097009999986,
+            "files": [],
+            "files_lint_results": [],
+            "files_number": 0,
+            "is_active": true,
+            "linter_name": "syft",
+            "name": "REPOSITORY_SYFT",
+            "number_errors": 0,
+            "number_fixed": 0,
+            "return_code": 0,
+            "status": "success",
+            "total_number_errors": 0,
+            "total_number_warnings": 0
+        },
+        {
+            "descriptor_id": "REPOSITORY",
+            "descriptor_type": "other",
+            "elapsed_time_s": 9.694394677999995,
+            "files": [],
+            "files_lint_results": [],
+            "files_number": 0,
+            "is_active": true,
+            "linter_name": "trivy",
+            "name": "REPOSITORY_TRIVY",
+            "number_errors": 0,
+            "number_fixed": 0,
+            "return_code": 0,
+            "status": "success",
+            "total_number_errors": 0,
+            "total_number_warnings": 0
+        },
+        {
+            "descriptor_id": "REPOSITORY",
+            "descriptor_type": "other",
+            "elapsed_time_s": 0.269979929999991,
+            "files": [],
+            "files_lint_results": [],
+            "files_number": 0,
+            "is_active": true,
+            "linter_name": "trivy-sbom",
+            "name": "REPOSITORY_TRIVY_SBOM",
+            "number_errors": 0,
+            "number_fixed": 0,
+            "return_code": 0,
+            "status": "success",
+            "total_number_errors": 0,
+            "total_number_warnings": 0
+        },
+        {
+            "descriptor_id": "YAML",
+            "descriptor_type": "format",
+            "elapsed_time_s": 0.4980409660000049,
+            "files": [
+                ".github/workflows/mega-linter.yml",
+                ".mega-linter.yml"
+            ],
+            "files_lint_results": [
+                {
+                    "errors_number": null,
+                    "file": ".github/workflows/mega-linter.yml",
+                    "fixed": false,
+                    "status": null,
+                    "status_code": null,
+                    "stdout": null,
+                    "warnings_number": null
+                },
+                {
+                    "errors_number": null,
+                    "file": ".mega-linter.yml",
+                    "fixed": true,
+                    "status": null,
+                    "status_code": null,
+                    "stdout": null,
+                    "warnings_number": null
+                }
+            ],
+            "files_number": 2,
+            "is_active": true,
+            "linter_name": "prettier",
+            "name": "YAML_PRETTIER",
+            "number_errors": 0,
+            "number_fixed": 1,
+            "return_code": 0,
+            "status": "success",
+            "total_number_errors": 0,
+            "total_number_warnings": 0
+        },
+        {
+            "descriptor_id": "YAML",
+            "descriptor_type": "format",
+            "elapsed_time_s": 5.767363723999992,
+            "files": [
+                ".github/workflows/mega-linter.yml",
+                ".mega-linter.yml"
+            ],
+            "files_lint_results": [
+                {
+                    "errors_number": null,
+                    "file": ".github/workflows/mega-linter.yml",
+                    "fixed": false,
+                    "status": null,
+                    "status_code": null,
+                    "stdout": null,
+                    "warnings_number": null
+                },
+                {
+                    "errors_number": null,
+                    "file": ".mega-linter.yml",
+                    "fixed": false,
+                    "status": null,
+                    "status_code": null,
+                    "stdout": null,
+                    "warnings_number": null
+                }
+            ],
+            "files_number": 2,
+            "is_active": true,
+            "linter_name": "v8r",
+            "name": "YAML_V8R",
+            "number_errors": 0,
+            "number_fixed": 0,
+            "return_code": 0,
+            "status": "success",
+            "total_number_errors": 0,
+            "total_number_warnings": 0
+        },
+        {
+            "descriptor_id": "YAML",
+            "descriptor_type": "format",
+            "elapsed_time_s": 0.5268471910000017,
+            "files": [
+                ".github/workflows/mega-linter.yml",
+                ".mega-linter.yml"
+            ],
+            "files_lint_results": [
+                {
+                    "errors_number": null,
+                    "file": ".github/workflows/mega-linter.yml",
+                    "fixed": false,
+                    "status": null,
+                    "status_code": null,
+                    "stdout": null,
+                    "warnings_number": null
+                },
+                {
+                    "errors_number": null,
+                    "file": ".mega-linter.yml",
+                    "fixed": false,
+                    "status": null,
+                    "status_code": null,
+                    "stdout": null,
+                    "warnings_number": null
+                }
+            ],
+            "files_number": 2,
+            "is_active": true,
+            "linter_name": "yamllint",
+            "name": "YAML_YAMLLINT",
+            "number_errors": 0,
+            "number_fixed": 0,
+            "return_code": 0,
+            "status": "success",
+            "total_number_errors": 0,
+            "total_number_warnings": 0
+        }
+    ],
+    "post_commands_results": [],
+    "pre_commands_results": [],
+    "report_folder": "/github/workspace/megalinter-reports",
+    "reporters": [
+        {
+            "is_active": true,
+            "master": null,
+            "name": "GITHUB_COMMENT",
+            "processing_order": 0,
+            "report_folder": "/github/workspace/megalinter-reports",
+            "report_items": []
+        },
+        {
+            "is_active": true,
+            "master": null,
+            "name": "CONSOLE",
+            "processing_order": 0,
+            "report_folder": "/github/workspace/megalinter-reports",
+            "report_items": []
+        },
+        {
+            "is_active": true,
+            "master": null,
+            "name": "UPDATED_SOURCES",
+            "processing_order": 0,
+            "report_folder": "/github/workspace/megalinter-reports",
+            "report_items": []
+        },
+        {
+            "is_active": true,
+            "master": null,
+            "name": "CONFIG",
+            "processing_order": 0,
+            "report_folder": "/github/workspace/megalinter-reports",
+            "report_items": []
+        },
+        {
+            "is_active": true,
+            "master": null,
+            "name": "JSON",
+            "processing_order": 0,
+            "report_folder": "/github/workspace/megalinter-reports",
+            "report_items": []
+        },
+        {
+            "is_active": true,
+            "master": null,
+            "name": "MARKDOWN_SUMMARY",
+            "processing_order": 0,
+            "report_folder": "/github/workspace/megalinter-reports",
+            "report_items": []
+        }
+    ],
+    "request_id": "1f1cbe88-7c77-11f1-8ead-ee37ad112f2d",
+    "return_code": 0,
+    "status": "success"
+}
