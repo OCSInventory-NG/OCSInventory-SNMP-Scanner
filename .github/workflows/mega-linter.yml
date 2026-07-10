@@ -19,6 +19,11 @@ concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}
   cancel-in-progress: true
 
+# Least-privilege default for GITHUB_TOKEN (fixes checkov CKV2_GHA_1).
+# The megalinter job escalates to the writes it needs below.
+permissions:
+  contents: read
+
 jobs:
   megalinter:
     name: MegaLinter
