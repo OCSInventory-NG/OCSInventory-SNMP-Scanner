@@ -1,29 +1,29 @@
-import configparser
-from datetime import datetime
-import socket
-from pysnmp.hlapi.asyncio import (
-    SnmpEngine,
-    CommunityData,
-    UdpTransportTarget,
-    ContextData,
-    ObjectType,
-    ObjectIdentity,
-    get_cmd,
-    next_cmd,
-    usmHMACMD5AuthProtocol,
-    usmHMACSHAAuthProtocol,
-    usmDESPrivProtocol,
-    usmAesCfb128Protocol
-)
-from pysnmp.smi import builder, view, compiler
 import asyncio
+import configparser
 import ipaddress
 import json
 import logging
-import requests
 import os
+import socket
 import uuid
+from datetime import datetime
 
+import requests
+from pysnmp.hlapi.asyncio import (
+    CommunityData,
+    ContextData,
+    ObjectIdentity,
+    ObjectType,
+    SnmpEngine,
+    UdpTransportTarget,
+    get_cmd,
+    next_cmd,
+    usmAesCfb128Protocol,
+    usmDESPrivProtocol,
+    usmHMACMD5AuthProtocol,
+    usmHMACSHAAuthProtocol,
+)
+from pysnmp.smi import builder, compiler, view
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 VERSION = "3.0.0"
@@ -37,10 +37,12 @@ class SNMPScanner:
         - Scan the network for SNMP devices
 
     The scanner can operate in two modes:
-        - ONLINE: The scanner retrieves the SNMP configuration from the server and sends the results to the server
+        - ONLINE: The scanner retrieves the SNMP configuration from the
+          server and sends the results to the server
         - OFFLINE: The scanner uses a local configuration and stores the results locally
 
-    To determine which configuration to use, the scanner checks the server's SNMP configuration and the local configuration.
+    To determine which configuration to use, the scanner checks the
+    server's SNMP configuration and the local configuration.
     If the server's configuration is empty, the scanner uses the local configuration.
     """
 
@@ -52,7 +54,10 @@ class SNMPScanner:
         logging.basicConfig(
             filename=self.log_file,
             level=self.log_level,
-            format="%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s",
+            format=(
+                "%(asctime)s - %(levelname)s - "
+                "[%(filename)s:%(lineno)d] - %(message)s"
+            ),
         )
         logging.info(f"Starting SNMP scanner v{VERSION}...")
         # endpoints
@@ -78,8 +83,13 @@ class SNMPScanner:
         self.load_mib_dir(self.mibs_dir)
         self.mib_view_controller = view.MibViewController(self.mib_builder)
         self.assets = []
-        self.log_levels = {"CRITICAL": 0, "ERROR": 1, "WARNING": 2, "INFO": 3, "DEBUG": 4}
-
+        self.log_levels = {
+            "CRITICAL": 0,
+            "ERROR": 1,
+            "WARNING": 2,
+            "INFO": 3,
+            "DEBUG": 4,
+        }
 
     def get_or_create_name(self):
         """Get or create a name for the scanner."""
@@ -139,8 +149,12 @@ class SNMPScanner:
             self.targets = config.get("scanner", "targeted_subnets").split(",")
             self.name = config.get("scanner", "name")
             self.mibs_dir = config.get("scanner", "mibs_dir")
-            self.server_logging_enabled = config.getboolean("scanner", "server_logging_enabled", fallback=False)
-            self.server_log_level = config.get("scanner", "server_log_level", fallback="WARNING").upper()
+            self.server_logging_enabled = config.getboolean(
+                "scanner", "server_logging_enabled", fallback=False
+            )
+            self.server_log_level = config.get(
+                "scanner", "server_log_level", fallback="WARNING"
+            ).upper()
 
     def server_logger(self, asset_id, log_level, scope, message):
         """
@@ -148,9 +162,14 @@ class SNMPScanner:
         Only sends if server_logging_enabled and in ONLINE mode.
         """
         if asset_id is None:
-            logging.warning("server_logger called with asset_id=None, skipping log send.")
+            logging.warning(
+                "server_logger called with asset_id=None, skipping log send."
+            )
             return
-        logging.debug(f"server_logger called with asset_id={asset_id}, log_level={log_level}, scope={scope}, message={message}")
+        logging.debug(
+            f"server_logger called with asset_id={asset_id}, "
+            f"log_level={log_level}, scope={scope}, message={message}"
+        )
         if not getattr(self, "server_logging_enabled", False):
             logging.debug("Server logging is disabled by config.")
             return
@@ -169,28 +188,39 @@ class SNMPScanner:
             "asset": asset_id,
             "scope": scope,
             "comment": message,
-            "level": log_level
+            "level": log_level,
         }
         try:
             logging.debug(f"Sending server log: {payload}")
             response = requests.post(url, json=payload, headers=headers)
             if response.status_code in [200, 201]:
-                logging.info(f"Server log sent for asset {asset_id} (scope: {scope}, level: {log_level})")
+                logging.info(
+                    f"Server log sent for asset {asset_id} "
+                    f"(scope: {scope}, level: {log_level})"
+                )
             else:
-                logging.warning(f"Failed to send server log for asset {asset_id}: {response.status_code}, {response.text}")
+                logging.warning(
+                    f"Failed to send server log for asset {asset_id}: "
+                    f"{response.status_code}, {response.text}"
+                )
         except Exception as e:
-            logging.error(f"Exception while sending server log for asset {asset_id}: {e}")
-
-
+            logging.error(
+                f"Exception while sending server log for asset {asset_id}: {e}"
+            )
 
     def get_auth_token(self, auth_data):
         """Get the authentication token from OCS"""
         try:
             url = self.base_url + self.auth_endpoint
-            payload = {"username": auth_data["username"], "password": auth_data["password"]}
+            payload = {
+                "username": auth_data["username"],
+                "password": auth_data["password"],
+            }
             headers = {"Content-Type": "application/json"}
-            
-            logging.debug(f"Attempting authentication with username: {auth_data['username']}")
+
+            logging.debug(
+                f"Attempting authentication with username: {auth_data['username']}"
+            )
             response = requests.post(url, json=payload, headers=headers)
 
             if response.status_code == 200:
@@ -199,7 +229,8 @@ class SNMPScanner:
                 return True
             else:
                 logging.error(
-                    f"Failed to retrieve authentication token. Status: {response.status_code}, Response: {response.text}"
+                    f"Failed to retrieve authentication token. "
+                    f"Status: {response.status_code}, Response: {response.text}"
                 )
                 return False
         except requests.exceptions.RequestException as e:
@@ -222,7 +253,10 @@ class SNMPScanner:
             return False
 
     def process_snmp_configs(self, configurations):
-        """Process the SNMP configurations, matching configurations to the scanner's subnets."""
+        """
+        Process the SNMP configurations, matching configurations to the
+        scanner's subnets.
+        """
         # is SNMP enabled on the server?
         check_enabled_url = self.base_url + self.snmp_enabled_endpoint
         headers = {
@@ -248,10 +282,13 @@ class SNMPScanner:
         scanner = self.get_scanner_instance()
         if not scanner:
             logging.info(
-                "Scanner instance not found, scan will be performed using the local targeted_subnets configuration. A SnmpScanner instance will be created at the end of the scan."
+                "Scanner instance not found, scan will be performed using "
+                "the local targeted_subnets configuration. A SnmpScanner "
+                "instance will be created at the end of the scan."
             )
 
-        # if both scanner['subnets'] and self.targets are defined, server's configuration takes precedence
+        # if both scanner['subnets'] and self.targets are defined,
+        # server's configuration takes precedence
         if not scanner and self.targets:
             logging.info("Subnets retrieved from local configuration")
         elif scanner and not self.targets:
@@ -260,7 +297,8 @@ class SNMPScanner:
         elif scanner and self.targets:
             self.targets = scanner["subnets"]
             logging.info(
-                "Subnets retrieved from the server and local configuration: using server's configuration."
+                "Subnets retrieved from the server and local "
+                "configuration: using server's configuration."
             )
         else:
             logging.error(
@@ -274,7 +312,8 @@ class SNMPScanner:
             configurations = scanner["configs"]
         else:
             logging.error(
-                "No SNMP configurations found for the scanner instance, scan will not be performed."
+                "No SNMP configurations found for the scanner instance, "
+                "scan will not be performed."
             )
             # we are not updating last scan date if no scan is performed
             self.scan_date = None
@@ -320,9 +359,7 @@ class SNMPScanner:
             logging.info("Scanner instance retrieved successfully from OCS server")
             return response.json()[0]
         elif response.status_code == 404:
-            logging.info(
-                f"Scanner instance not found with name {self.name}"
-            )
+            logging.info(f"Scanner instance not found with name {self.name}")
             return None
         else:
             logging.error(
@@ -355,7 +392,7 @@ class SNMPScanner:
                 if not self.scan_date
                 else self.scan_date.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             ),
-            "assets": self.assets
+            "assets": self.assets,
         }
 
         if scanner:
@@ -364,7 +401,8 @@ class SNMPScanner:
                 logging.info("Scanner instance updated successfully")
             else:
                 logging.error(
-                    f"Failed to update scanner instance: {response.status_code}, reason: {response.json()}"
+                    f"Failed to update scanner instance: "
+                    f"{response.status_code}, reason: {response.json()}"
                 )
         else:
             payload["configs"] = []
@@ -373,7 +411,8 @@ class SNMPScanner:
                 logging.info("Scanner instance created successfully")
             else:
                 logging.error(
-                    f"Failed to create scanner instance: {response.status_code}, reason: {response.json()}"
+                    f"Failed to create scanner instance: "
+                    f"{response.status_code}, reason: {response.json()}"
                 )
 
     def retrieve_snmp_configuration(self):
@@ -425,9 +464,14 @@ class SNMPScanner:
     async def snmp_scan(self, community, ip, oid, version, mode="SNMP_GET"):
         """Scan the network for SNMP devices."""
         try:
-            transport = await UdpTransportTarget.create((ip, 161), community["timeout"], community["retries"])
+            transport = await UdpTransportTarget.create(
+                (ip, 161), community["timeout"], community["retries"]
+            )
 
-            logging.debug(f"Initializing SNMP scan for IP: {ip}, OID: {oid}, Version: {version}, Mode: {mode}")
+            logging.debug(
+                f"Initializing SNMP scan for IP: {ip}, OID: {oid}, "
+                f"Version: {version}, Mode: {mode}"
+            )
 
             if version == "1":
                 community_data = CommunityData(community["name"], mpModel=0)
@@ -439,31 +483,51 @@ class SNMPScanner:
                 password = community.get("password", "")
                 priv_password = community.get("priv_password", "")
 
-                auth_protocol = usmHMACMD5AuthProtocol if community["auth_protocol"] == "MD5" else usmHMACSHAAuthProtocol
-                priv_protocol = usmDESPrivProtocol if community["priv_protocol"] == "DES" else usmAesCfb128Protocol
-                
+                auth_protocol = (
+                    usmHMACMD5AuthProtocol
+                    if community["auth_protocol"] == "MD5"
+                    else usmHMACSHAAuthProtocol
+                )
+                priv_protocol = (
+                    usmDESPrivProtocol
+                    if community["priv_protocol"] == "DES"
+                    else usmAesCfb128Protocol
+                )
+
                 if community["auth_level"] == "authNoPriv":
-                    community_data = CommunityData(user, authKey=password, authProtocol=auth_protocol)
+                    community_data = CommunityData(
+                        user, authKey=password, authProtocol=auth_protocol
+                    )
                 elif community["auth_level"] == "authPriv":
-                    community_data = CommunityData(user, authKey=password, authProtocol=auth_protocol, privKey=priv_password, privProtocol=priv_protocol)
+                    community_data = CommunityData(
+                        user,
+                        authKey=password,
+                        authProtocol=auth_protocol,
+                        privKey=priv_password,
+                        privProtocol=priv_protocol,
+                    )
                 else:
                     community_data = CommunityData(user)
 
             results = []
             try:
                 if mode == "SNMP_GET":
-                    error_indication, error_status, error_index, var_binds = await get_cmd(
-                        SnmpEngine(),
-                        community_data,
-                        transport,
-                        ContextData(),
-                        ObjectType(ObjectIdentity(oid))
+                    error_indication, error_status, error_index, var_binds = (
+                        await get_cmd(
+                            SnmpEngine(),
+                            community_data,
+                            transport,
+                            ContextData(),
+                            ObjectType(ObjectIdentity(oid)),
+                        )
                     )
 
                     if error_indication:
                         logging.error(f"SNMP error: {error_indication}")
                     elif error_status:
-                        logging.error(f"SNMP status error: {error_status.prettyPrint()}")
+                        logging.error(
+                            f"SNMP status error: {error_status.prettyPrint()}"
+                        )
                     else:
                         for var_bind in var_binds:
                             try:
@@ -473,10 +537,14 @@ class SNMPScanner:
                                 if data_type == "OctetString":
                                     # mac address ?
                                     if len(var_bind[1].asOctets()) == 6:
-                                        value_str = ':'.join(f'{b:02x}' for b in var_bind[1].asOctets())
+                                        value_str = ":".join(
+                                            f"{b:02x}" for b in var_bind[1].asOctets()
+                                        )
                                     else:
                                         try:
-                                            value_str = var_bind[1].asOctets().decode('utf-8')
+                                            value_str = (
+                                                var_bind[1].asOctets().decode("utf-8")
+                                            )
                                         except UnicodeDecodeError:
                                             value_str = var_bind[1].prettyPrint()
                                 # timeticks data type
@@ -485,15 +553,23 @@ class SNMPScanner:
                                     days, remain = divmod(ticks / 100, 86400)
                                     hours, remain = divmod(remain, 3600)
                                     minutes, seconds = divmod(remain, 60)
-                                    value_str = f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
+                                    value_str = (
+                                        f"{int(days)}d {int(hours)}h "
+                                        f"{int(minutes)}m {int(seconds)}s"
+                                    )
                                 else:
                                     value_str = var_bind[1].prettyPrint()
 
                                 results.append((oid_str, value_str))
-                                logging.debug(f"Successfully processed OID: {oid_str} - Value: {value_str}")
+                                logging.debug(
+                                    f"Successfully processed OID: {oid_str} "
+                                    f"- Value: {value_str}"
+                                )
 
                             except Exception as e:
-                                logging.error(f"Error processing var_bind for IP {ip}: {str(e)}")
+                                logging.error(
+                                    f"Error processing var_bind for IP {ip}: {str(e)}"
+                                )
                                 continue
                 else:  # SNMP_WALK
 
@@ -503,15 +579,22 @@ class SNMPScanner:
                         transport,
                         ContextData(),
                         ObjectType(ObjectIdentity(oid)),
-                        lexicographicMode=False
+                        lexicographicMode=False,
                     )
 
-                    for error_indication, error_status, error_index, var_binds in await next:
+                    for (
+                        error_indication,
+                        error_status,
+                        error_index,
+                        var_binds,
+                    ) in await next:
                         if error_indication:
                             logging.error(f"SNMP error: {error_indication}")
                             break
                         elif error_status:
-                            logging.error(f"SNMP status error: {error_status.prettyPrint()}")
+                            logging.error(
+                                f"SNMP status error: {error_status.prettyPrint()}"
+                            )
                             break
                         else:
                             for var_bind in var_binds:
@@ -522,10 +605,17 @@ class SNMPScanner:
                                     if data_type == "OctetString":
                                         # mac address ?
                                         if len(var_bind[1].asOctets()) == 6:
-                                            value_str = ':'.join(f'{b:02x}' for b in var_bind[1].asOctets())
+                                            value_str = ":".join(
+                                                f"{b:02x}"
+                                                for b in var_bind[1].asOctets()
+                                            )
                                         else:
                                             try:
-                                                value_str = var_bind[1].asOctets().decode('utf-8')
+                                                value_str = (
+                                                    var_bind[1]
+                                                    .asOctets()
+                                                    .decode("utf-8")
+                                                )
                                             except UnicodeDecodeError:
                                                 value_str = var_bind[1].prettyPrint()
                                     # timeticks data type
@@ -534,15 +624,24 @@ class SNMPScanner:
                                         days, remain = divmod(ticks / 100, 86400)
                                         hours, remain = divmod(remain, 3600)
                                         minutes, seconds = divmod(remain, 60)
-                                        value_str = f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
+                                        value_str = (
+                                            f"{int(days)}d {int(hours)}h "
+                                            f"{int(minutes)}m {int(seconds)}s"
+                                        )
                                     else:
                                         value_str = var_bind[1].prettyPrint()
 
                                     results.append((oid_str, value_str))
-                                    logging.debug(f"Successfully processed OID: {oid_str} - Value: {value_str}")
+                                    logging.debug(
+                                        f"Successfully processed OID: {oid_str} "
+                                        f"- Value: {value_str}"
+                                    )
 
                                 except Exception as e:
-                                    logging.error(f"Error processing var_bind for IP {ip}: {str(e)}")
+                                    logging.error(
+                                        f"Error processing var_bind for IP {ip}: "
+                                        f"{str(e)}"
+                                    )
                                     continue
 
             except Exception as e:
@@ -552,8 +651,11 @@ class SNMPScanner:
             if not results:
                 logging.debug(f"No results returned for IP {ip}, OID {oid}")
             else:
-                logging.debug(f"Successfully retrieved {len(results)} results for IP {ip}, OID {oid}")
-                
+                logging.debug(
+                    f"Successfully retrieved {len(results)} results "
+                    f"for IP {ip}, OID {oid}"
+                )
+
             return results
 
         except Exception as e:
@@ -568,13 +670,17 @@ class SNMPScanner:
         for community in self.configs:
             for ip in community["ips"]:
                 logging.debug(
-                    f"======== Scanning {ip} with community '{community['name']}' and version '{community['version']}' ========"
+                    f"======== Scanning {ip} with community "
+                    f"'{community['name']}' and version "
+                    f"'{community['version']}' ========"
                 )
                 self.nb_scanned += 1
                 device_results = {}
                 for name, oid in self.oids.items():
                     logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
-                    snmp_results = await self.snmp_scan(community, ip, oid, community["version"], mode)
+                    snmp_results = await self.snmp_scan(
+                        community, ip, oid, community["version"], mode
+                    )
 
                     if snmp_results:
                         for oid, value in snmp_results:
@@ -582,7 +688,7 @@ class SNMPScanner:
                         results[ip] = device_results
 
                     else:
-                        logging.debug(f"No SNMP response received")
+                        logging.debug("No SNMP response received")
 
         # count the number of devices found
         self.nb_found = len(results)
@@ -604,7 +710,9 @@ class SNMPScanner:
         for community in self.configs:
             for ip in community["ips"]:
                 logging.debug(
-                    f"======== Advance scanning {ip} with community '{community['name']}' and version '{community['version']}' ========"
+                    f"======== Advance scanning {ip} with community "
+                    f"'{community['name']}' and version "
+                    f"'{community['version']}' ========"
                 )
                 device_results = {}
                 if ip in template_oids:
@@ -614,19 +722,28 @@ class SNMPScanner:
                             name = dic["name"]
                             oid = dic["retrieval_value"]
                             mode = dic["retrieval_method"]
-                            logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
-                            snmp_results = await self.snmp_scan(community, ip, oid, community["version"], mode)
+                            logging.debug(
+                                f"Scanning '{name}' - OID {oid} with mode {mode}"
+                            )
+                            snmp_results = await self.snmp_scan(
+                                community, ip, oid, community["version"], mode
+                            )
 
                             if snmp_results:
                                 index = 0
                                 for oid, value in snmp_results:
                                     if section_name in device_results:
-                                        # use index of the value in snmp_results to keep track of the order
+                                        # use index of the value in snmp_results
+                                        # to keep track of the order
                                         if index < len(device_results[section_name]):
-                                            device_results[section_name][index][name] = value
+                                            device_results[section_name][index][
+                                                name
+                                            ] = value
                                             index += 1
                                         else:
-                                            device_results[section_name].append({name: value})
+                                            device_results[section_name].append(
+                                                {name: value}
+                                            )
                                             index += 1
                                     else:
                                         device_results[section_name] = [{name: value}]
@@ -659,52 +776,85 @@ class SNMPScanner:
         """Send data to OCS server"""
         logging.info("Starting data transmission to OCS...")
         assets = []
-        
+
         if self.mode == "ONLINE":
             url = self.base_url + self.asset_collection_endpoint
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Token {self.token}",
             }
-            
+
             for device in self.formatted_results:
                 try:
                     method = device.pop("method")
-                    logging.debug(f"Processing device {device.get('uuid', 'unknown')} with method {method}")
-                    
+                    logging.debug(
+                        f"Processing device {device.get('uuid', 'unknown')} "
+                        f"with method {method}"
+                    )
+
                     if method == "PUT":
                         response = requests.put(url, json=device, headers=headers)
                     elif method == "POST":
                         response = requests.post(url, json=device, headers=headers)
                     else:
-                        logging.error(f"Invalid method {method} for device {device.get('uuid', 'unknown')}")
+                        logging.error(
+                            f"Invalid method {method} for device "
+                            f"{device.get('uuid', 'unknown')}"
+                        )
                         continue
 
                     if response.status_code in [200, 201]:
-                        msg = f"Device {device['uuid']} successfully {'created' if method == 'POST' else 'updated'}"
+                        msg = (
+                            f"Device {device['uuid']} successfully "
+                            f"{'created' if method == 'POST' else 'updated'}"
+                        )
                         logging.info(msg)
-                        # keeping ids of created/updated assets to update scanner instance
+                        # keeping ids of created/updated assets to update
+                        # scanner instance
                         asset_id = response.json()["id"]
                         assets.append(asset_id)
                         # server logging
-                        self.server_logger(asset_id, "INFO",
-                                           f"{'INVENTORY_BASE_INSERT' if method == 'POST' else 'INVENTORY_BASE_UPDATE'}", msg)
+                        self.server_logger(
+                            asset_id,
+                            "INFO",
+                            (
+                                "INVENTORY_BASE_INSERT"
+                                if method == "POST"
+                                else "INVENTORY_BASE_UPDATE"
+                            ),
+                            msg,
+                        )
                     else:
                         logging.error(
-                            f"Failed to {'create' if method == 'POST' else 'update'} device {device['uuid']}. "
+                            f"Failed to {'create' if method == 'POST' else 'update'} "
+                            f"device {device['uuid']}. "
                             f"Status: {response.status_code}, Response: {response.text}"
                         )
 
-                        self.server_logger(asset_id, "ERROR", "INVENTORY_BASE_ERR",
-                                           f"Failed to {'create' if method == 'POST' else 'update'} SNMP asset")
+                        self.server_logger(
+                            asset_id,
+                            "ERROR",
+                            "INVENTORY_BASE_ERR",
+                            f"Failed to {'create' if method == 'POST' else 'update'} "
+                            f"SNMP asset",
+                        )
 
                 except requests.exceptions.RequestException as e:
-                    logging.error(f"Network error while processing device {device.get('uuid', 'unknown')}: {str(e)}")
+                    logging.error(
+                        f"Network error while processing device "
+                        f"{device.get('uuid', 'unknown')}: {str(e)}"
+                    )
                 except Exception as e:
-                    logging.error(f"Unexpected error while processing device {device.get('uuid', 'unknown')}: {str(e)}")
+                    logging.error(
+                        f"Unexpected error while processing device "
+                        f"{device.get('uuid', 'unknown')}: {str(e)}"
+                    )
 
         else:
-            logging.info(f"Operating in OFFLINE mode. Storing data locally in {self.inventoy_dir}")
+            logging.info(
+                f"Operating in OFFLINE mode. "
+                f"Storing data locally in {self.inventoy_dir}"
+            )
             try:
                 self.store_data_locally(self.formatted_results)
             except Exception as e:
@@ -769,7 +919,10 @@ class SNMPScanner:
         return formatted_results
 
     def format_to_template(self, advanced_results):
-        """Merge the advanced results with the formatted results for template inventory."""
+        """
+        Merge the advanced results with the formatted results for template
+        inventory.
+        """
         # add the template_inventory key to the formatted results dictionary
         for result in self.formatted_results:
             if result["srcip"] in advanced_results:
@@ -796,7 +949,12 @@ class SNMPScanner:
                     result["template"] = existing_asset["template"]
                 else:
                     logging.info(f"No template assigned to {result['uuid']}")
-                    self.server_logger(asset_id, "DEBUG", "INVENTORY_EXT_ERR", "No template assigned to SNMP asset")
+                    self.server_logger(
+                        asset_id,
+                        "DEBUG",
+                        "INVENTORY_EXT_ERR",
+                        "No template assigned to SNMP asset",
+                    )
                     result["template"] = None
             else:
                 logging.info(
@@ -807,14 +965,16 @@ class SNMPScanner:
 
     async def run(self):
         """Main method to run the scanner."""
-        # if the scanner is in ONLINE mode and the server is not reachable, switch to OFFLINE mode
+        # if the scanner is in ONLINE mode and the server is not
+        # reachable, switch to OFFLINE mode
         if self.mode == "ONLINE" and not self.check_server():
             logging.error("Server is not reachable, switching to OFFLINE mode...")
             self.mode = "OFFLINE"
         self.retrieve_snmp_configuration()
         if not self.configs:
             logging.error(
-                "No SNMP configuration loaded : Failed to retrieve SNMP configuration (403). Check OCS user permissions."
+                "No SNMP configuration loaded : Failed to retrieve SNMP "
+                "configuration (403). Check OCS user permissions."
             )
             exit()
 
@@ -823,7 +983,8 @@ class SNMPScanner:
         self.formatted_results = self.format_to_base(scan_results)
 
         if self.mode == "ONLINE":
-            # associate formatted results with their appropriate templates, based on their uuid
+            # associate formatted results with their appropriate templates,
+            # based on their uuid
             self.get_templates()
             # perform advanced scans based on templates
             self.advanced_results = await self.advanced_scan()
@@ -839,7 +1000,9 @@ class SNMPScanner:
         elif self.mode == "OFFLINE":
             self.store_data_locally(self.formatted_results)
             logging.info(
-                f"Inventories stored locally in {self.inventoy_dir}. Scan complete. Found a total of {len(self.formatted_results)} devices."
+                f"Inventories stored locally in {self.inventoy_dir}. "
+                f"Scan complete. Found a total of "
+                f"{len(self.formatted_results)} devices."
             )
 
 
