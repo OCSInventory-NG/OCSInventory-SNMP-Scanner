@@ -1,7 +1,0 @@
-[0000]  WARN no explicit name and version provided for directory source, deriving artifact ID from the given path (which is not ideal)
-NAME                                  VERSION  TYPE           
-actions/checkout                      v6       github-action  
-actions/upload-artifact               v7       github-action  
-oxsecurity/megalinter/flavors/python  v9       github-action  
-peter-evans/create-pull-request       v7       github-action  
-stefanzweifel/git-auto-commit-action  v7       github-action

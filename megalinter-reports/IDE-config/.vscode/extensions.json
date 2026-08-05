@@ -1,9 +1,0 @@
-{
-    "recommendations": [
-        "esbenp.prettier-vscode",
-        "charliermarsh.ruff",
-        "AquaSecurityOfficial.trivy-vulnerability-scanner",
-        "ms-python.flake8",
-        "ms-python.python"
-    ]
-}
