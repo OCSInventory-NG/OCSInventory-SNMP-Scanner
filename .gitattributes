@@ -1,0 +1,8 @@
+.claude                 export-ignore
+.flake8                 export-ignore
+.github                 export-ignore
+.gitignore              export-ignore
+.megalinter_github_conf export-ignore
+.mega-linter.yml        export-ignore
+.ruff.toml              export-ignore
+.gitattributes          export-ignore

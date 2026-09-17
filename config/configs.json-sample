@@ -1,0 +1,30 @@
+[
+  {
+    "id": 1,
+    "name": "public",
+    "version": "2c",
+    "user": "",
+    "auth_level": "noAuthNoPriv",
+    "password": "",
+    "auth_protocol": "MD5",
+    "priv_protocol": "DES",
+    "priv_password": "",
+    "retries": 1,
+    "timeout": 1,
+    "subnets": ["192.168.1.0/24"]
+  },
+  {
+    "id": 2,
+    "name": "public",
+    "version": "3",
+    "user": "",
+    "auth_level": "noAuthNoPriv",
+    "password": "",
+    "auth_protocol": "MD5",
+    "priv_protocol": "DES",
+    "priv_password": "",
+    "retries": 1,
+    "timeout": 1,
+    "subnets": ["192.168.2.0/24"]
+  }
+]
