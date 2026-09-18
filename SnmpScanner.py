@@ -143,6 +143,7 @@ class SNMPScanner:
                 "password": config.get("auth", "ocs_password"),
             }
             self.base_url = config.get("api", "ocs_base_url")
+            self.tls_ca = config.get("api", "ocs_cacert")
             self.mode = config.get("scanner", "scanner_mode")
             self.inventoy_dir = DIR + "/" + config.get("scanner", "local_inventory_dir")
             self.log_level = config.get("scanner", "log_level")
@@ -180,6 +181,7 @@ class SNMPScanner:
         if self.log_levels[log_level] > self.log_levels.get(self.server_log_level, 2):
             return
         url = self.base_url + "/asset/logs/"
+        ca = self.tls_ca
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Token {self.token}",
@@ -192,7 +194,7 @@ class SNMPScanner:
         }
         try:
             logging.debug(f"Sending server log: {payload}")
-            response = requests.post(url, json=payload, headers=headers)
+            response = requests.post(url, json=payload, headers=headers, verify=ca)
             if response.status_code in [200, 201]:
                 logging.info(
                     f"Server log sent for asset {asset_id} "
@@ -212,6 +214,7 @@ class SNMPScanner:
         """Get the authentication token from OCS"""
         try:
             url = self.base_url + self.auth_endpoint
+            ca = self.tls_ca
             payload = {
                 "username": auth_data["username"],
                 "password": auth_data["password"],
@@ -221,7 +224,7 @@ class SNMPScanner:
             logging.debug(
                 f"Attempting authentication with username: {auth_data['username']}"
             )
-            response = requests.post(url, json=payload, headers=headers)
+            response = requests.post(url, json=payload, headers=headers, verify=ca)
 
             if response.status_code == 200:
                 self.token = response.json()["token"]
@@ -259,11 +262,12 @@ class SNMPScanner:
         """
         # is SNMP enabled on the server?
         check_enabled_url = self.base_url + self.snmp_enabled_endpoint
+        ca = self.tls_ca
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Token {self.token}",
         }
-        response = requests.get(check_enabled_url, headers=headers)
+        response = requests.get(check_enabled_url, headers=headers, verify=ca)
         if response.status_code == 200:
             # check if snmp is enabled
             if response.json()["value"][0]["value"] != 1:
@@ -350,11 +354,12 @@ class SNMPScanner:
     def get_scanner_instance(self):
         """Get the scanner instance from the server, using scanner's name."""
         url = self.base_url + self.scanner_endpoint + f"?name={self.name}&expand=*"
+        ca = self.tls_ca
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Token {self.token}",
         }
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, verify=ca)
         if response.status_code == 200 and response.json():
             logging.info("Scanner instance retrieved successfully from OCS server")
             return response.json()[0]
@@ -375,6 +380,7 @@ class SNMPScanner:
             if scanner
             else self.base_url + self.scanner_endpoint
         )
+        ca = self.tls_ca
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Token {self.token}",
@@ -396,7 +402,7 @@ class SNMPScanner:
         }
 
         if scanner:
-            response = requests.patch(url, json=payload, headers=headers)
+            response = requests.patch(url, json=payload, headers=headers, verify=ca)
             if response.status_code == 200:
                 logging.info("Scanner instance updated successfully")
             else:
@@ -406,7 +412,7 @@ class SNMPScanner:
                 )
         else:
             payload["configs"] = []
-            response = requests.post(url, json=payload, headers=headers)
+            response = requests.post(url, json=payload, headers=headers, verify=ca)
             if response.status_code in [200, 201]:
                 logging.info("Scanner instance created successfully")
             else:
@@ -419,11 +425,12 @@ class SNMPScanner:
         """Retrieve SNMP configuration from the server."""
         if self.mode == "ONLINE":
             url = self.base_url + self.config_endpoint
+            ca = self.tls_ca
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Token {self.token}",
             }
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, verify=ca)
 
             if response.status_code == 200:
                 self.config = response.json()
@@ -779,6 +786,7 @@ class SNMPScanner:
 
         if self.mode == "ONLINE":
             url = self.base_url + self.asset_collection_endpoint
+            ca = self.tls_ca
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Token {self.token}",
@@ -793,9 +801,9 @@ class SNMPScanner:
                     )
 
                     if method == "PUT":
-                        response = requests.put(url, json=device, headers=headers)
+                        response = requests.put(url, json=device, headers=headers, verify=ca)
                     elif method == "POST":
-                        response = requests.post(url, json=device, headers=headers)
+                        response = requests.post(url, json=device, headers=headers, verify=ca)
                     else:
                         logging.error(
                             f"Invalid method {method} for device "
@@ -931,6 +939,7 @@ class SNMPScanner:
     def get_templates(self):
         """Retrieve the available templates from the server."""
         asset_url = self.base_url + self.asset_endpoint + "?uuid="
+        ca = self.tls_ca
         headers = {
             "Content-Type": "application/json",
             "Authorization": "Token " + self.token,
@@ -939,7 +948,7 @@ class SNMPScanner:
         for result in self.formatted_results:
             # check if the device exists already
             url = asset_url + result["uuid"] + "&expand=*"
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, verify=ca)
             if response.status_code == 200 and response.json():
                 existing_asset = response.json()[0]
                 asset_id = response.json()[0]["id"]
