@@ -82,6 +82,7 @@ class SNMPScanner:
         )
         logging.info(f"Starting SNMP scanner v{VERSION}...")
         self.certificate_logged = False
+        self.log_certificate_mode()
         self.session = self.create_session()
         # endpoints
         self.auth_endpoint = "/api-auth/token"
@@ -205,6 +206,32 @@ class SNMPScanner:
                 self.certificate_logged = True
         session.mount("https://", SystemStoreAdapter(cafile))
         return session
+
+    def log_certificate_mode(self):
+        """Log which TLS mode is active, once at startup."""
+        if not self.is_https():
+            logging.info("Certificate mode: TLS disabled (HTTP).")
+            return
+        if self.bypass_certificate:
+            logging.warning(
+                "Certificate mode: TLS validation bypassed "
+                "(bypass_certificate=true, insecure)."
+            )
+            return
+        if self.certificate_file_exists():
+            logging.info(
+                "Certificate mode: TLS enabled (system store), fallback "
+                f"certificate path available: {self.certificate}"
+            )
+            return
+        if self.certificate:
+            logging.warning(
+                f"Configured certificate file not found: {self.certificate}"
+            )
+        logging.info(
+            "Certificate mode: TLS enabled (system store), no fallback "
+            "certificate path available."
+        )
 
     def should_try_certificate_fallback(self):
         return (
