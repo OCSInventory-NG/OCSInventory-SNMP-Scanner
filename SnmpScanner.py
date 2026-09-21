@@ -35,10 +35,18 @@ class SystemStoreAdapter(HTTPAdapter):
     """Verify server certificates against the system trust store.
 
     This adapter uses the OpenSSL default paths, so the system store is used.
+    A cafile is added on top of it rather than replacing it.
     """
 
+    def __init__(self, cafile=None, **kwargs):
+        self.cafile = cafile
+        super().__init__(**kwargs)
+
     def init_poolmanager(self, *args, **kwargs):
-        kwargs["ssl_context"] = ssl.create_default_context()
+        context = ssl.create_default_context()
+        if self.cafile:
+            context.load_verify_locations(cafile=self.cafile)
+        kwargs["ssl_context"] = context
         return super().init_poolmanager(*args, **kwargs)
 
 
@@ -73,6 +81,7 @@ class SNMPScanner:
             ),
         )
         logging.info(f"Starting SNMP scanner v{VERSION}...")
+        self.certificate_logged = False
         self.session = self.create_session()
         # endpoints
         self.auth_endpoint = "/api-auth/token"
@@ -180,7 +189,7 @@ class SNMPScanner:
     def certificate_file_exists(self):
         return bool(self.certificate) and os.path.isfile(self.certificate)
 
-    def create_session(self):
+    def create_session(self, use_certificate_file=False):
         """Build a requests session applying the configured TLS policy."""
         session = requests.Session()
         if not self.is_https():
@@ -188,11 +197,51 @@ class SNMPScanner:
         if self.bypass_certificate:
             session.verify = False
             return session
-        session.mount("https://", SystemStoreAdapter())
+        cafile = None
+        if use_certificate_file and self.certificate_file_exists():
+            cafile = self.certificate
+            if not self.certificate_logged:
+                logging.info(f"Using certificate file: {cafile}")
+                self.certificate_logged = True
+        session.mount("https://", SystemStoreAdapter(cafile))
         return session
 
+    def should_try_certificate_fallback(self):
+        return (
+            self.is_https()
+            and not self.bypass_certificate
+            and self.certificate_file_exists()
+        )
+
     def request(self, method, url, **kwargs):
-        return self.session.request(method, url, **kwargs)
+        """Send a request, retrying with the certificate file on TLS failure.
+
+        The system trust store is always tried first, so the configured
+        certificate extends the trusted roots instead of replacing them.
+        """
+        try:
+            return self.session.request(method, url, **kwargs)
+        except requests.exceptions.SSLError as primary_error:
+            if not self.should_try_certificate_fallback():
+                logging.error(
+                    "TLS validation failed using system store. "
+                    f"Scanned certificate paths: [{self.certificate}]. "
+                    f"Error: {primary_error}"
+                )
+                raise
+            fallback = self.create_session(use_certificate_file=True)
+            try:
+                return fallback.request(method, url, **kwargs)
+            except requests.exceptions.SSLError as fallback_error:
+                logging.error(
+                    "TLS validation failed with both system store and "
+                    "certificate file. Scanned certificate paths: "
+                    f"[{self.certificate}]. Primary error: {primary_error} | "
+                    f"Fallback error: {fallback_error}"
+                )
+                raise
+            finally:
+                fallback.close()
 
     def server_logger(self, asset_id, log_level, scope, message):
         """
