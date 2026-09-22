@@ -1,3 +1,15 @@
 megalinter-reports/
 .vscode/
 .idea/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Runtime configuration
+config/scanner.conf
+config/configs.json
+
+# Scan output and logs
+files/*.json
+logs/*.log

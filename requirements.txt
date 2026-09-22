@@ -1,8 +1,8 @@
 # SnmpScanner requirements
 
-# Snmp library
-pysnmp>=4.4.12
+# SNMP library
+pysnmp>=7.1.6,<8
 
 # Other dependencies
-requests>=2.25.1
 pysmi>=1.6.2
+requests>=2.25.1
