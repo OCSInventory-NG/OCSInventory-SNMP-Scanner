@@ -18,7 +18,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -43,7 +43,7 @@ jobs:
           tar -tzf "${PKG}-${GITHUB_REF_NAME}.tar.gz"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: "OCS Inventory SNMP Scanner ${{ github.ref_name }}"
           prerelease: ${{ contains(github.ref_name, '-') }}
