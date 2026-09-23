@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime
 
 import requests
+import urllib3
 from pysnmp.hlapi.asyncio import (
     CommunityData,
     ContextData,
@@ -196,6 +197,8 @@ class SNMPScanner:
         if not self.is_https():
             return session
         if self.bypass_certificate:
+            # would otherwise warn on every single request
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             session.verify = False
             return session
         cafile = None
