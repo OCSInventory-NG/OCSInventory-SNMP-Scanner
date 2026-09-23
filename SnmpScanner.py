@@ -258,7 +258,7 @@ class SNMPScanner:
                 raise
             fallback = self.create_session(use_certificate_file=True)
             try:
-                return fallback.request(method, url, **kwargs)
+                response = fallback.request(method, url, **kwargs)
             except requests.exceptions.SSLError as fallback_error:
                 logging.error(
                     "TLS validation failed with both system store and "
@@ -267,8 +267,13 @@ class SNMPScanner:
                     f"Fallback error: {fallback_error}"
                 )
                 raise
+            else:
+                self.session.close()
+                self.session = fallback
+                return response
             finally:
-                fallback.close()
+                if self.session is not fallback:
+                    fallback.close()
 
     def server_logger(self, asset_id, log_level, scope, message):
         """
