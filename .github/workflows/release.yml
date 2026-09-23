@@ -1,0 +1,59 @@
+---
+name: Release
+
+# Publishes the source tarball that OCSInventory-Server-Packages builds the
+# .deb/.rpm from. Its contents are decided by .gitattributes (export-ignore).
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+*"
+
+permissions:
+  contents: write
+
+env:
+  PKG: ocsinventory-snmp-scanner
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # SnmpScanner.py logs its own VERSION: fail rather than ship a mismatch.
+      - name: Check VERSION matches the tag
+        run: |
+          set -euo pipefail
+          tag_base="${GITHUB_REF_NAME%%-*}"   # tolerates a -rcN suffix
+          file_version="$(sed -n 's/^VERSION = "\(.*\)"$/\1/p' SnmpScanner.py)"
+          if [ "$file_version" != "$tag_base" ]; then
+            echo "::error file=SnmpScanner.py::VERSION is '${file_version}' but tag '${GITHUB_REF_NAME}' expects '${tag_base}'"
+            exit 1
+          fi
+          echo "VERSION '${file_version}' matches tag '${GITHUB_REF_NAME}'"
+
+      - name: Build release tarball
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz --prefix="${PKG}/" \
+            -o "${PKG}-${GITHUB_REF_NAME}.tar.gz" HEAD
+          echo "Tarball contents:"
+          tar -tzf "${PKG}-${GITHUB_REF_NAME}.tar.gz"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: "OCS Inventory SNMP Scanner ${{ github.ref_name }}"
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          body: |
+            OCS Inventory SNMP Scanner ${{ github.ref_name }}.
+
+            Source tarball only. The .deb and .rpm packages are published by
+            https://github.com/OCSInventory-NG/OCSInventory-Server-Packages/releases
+
+            Running from this tarball: copy `config/scanner.conf-sample` to
+            `config/scanner.conf` before the first run.
+          files: "${{ env.PKG }}-${{ github.ref_name }}.tar.gz"

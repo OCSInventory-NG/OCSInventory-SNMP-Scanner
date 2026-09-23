@@ -25,14 +25,14 @@ If a custom template is available for a device, the scanner performs an advanced
 
 ## Prerequisites
 ### System
-- Python 3.6 or later
+- Python 3.9 or later
 - `pip` package manager
 
 ### Python
-- `pysnmp` library
-- `requests` library
-- `configparser` library
-- `socket` library
+See `requirements.txt` for the authoritative list and version bounds:
+- `pysnmp` (>= 7.1.6, < 8)
+- `pysmi` (>= 1.6.2)
+- `requests`
 
 ### OCS Configuration
 In the `online` mode the scanner requires specific configuration on the OCS server, see below.
@@ -86,8 +86,15 @@ For template examples and instructions regarding building your own template, ple
 ```bash
 pip install -r requirements.txt
 ```
-4. Edit the `config/scanner.conf` file to match your environment, see below for more information
-5. If using the `offline` mode, edit the `config/configs.json` file to match your SNMP configurations
+4. Create your configuration files from the shipped samples:
+```bash
+cp config/scanner.conf-sample config/scanner.conf
+cp config/configs.json-sample config/configs.json
+```
+5. Edit the `config/scanner.conf` file to match your environment, see below for more information
+6. If using the `offline` mode, edit the `config/configs.json` file to match your SNMP configurations
+
+> When installing from the `.deb`/`.rpm` packages, both files live in `/etc/ocsinventory-snmp-scanner/` and `config/` is a symlink to that directory.
 
 The `configs.json` JSON file contains the SNMP configurations for the scanner. Refer to the [SNMP Configuration](#SNMP-configuration-(mandatory)) section for more information on the mandatory fields. By default, the file also contains default configurations that you can copy and modify. Multiple communities can be defined in the file, the scanner will use the `subnets` field to determine which community to use to scan a device. 
 > Tip : the `/snmp/config/` API endpoint can be used to retrieve existing SNMP configurations from the OCS server and update the `configs.json` file.
