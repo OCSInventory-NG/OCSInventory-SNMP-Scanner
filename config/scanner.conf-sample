@@ -8,6 +8,12 @@ ocs_password =
 
 [api]
 ocs_base_url = http://127.0.0.1:8000
+# path to a PEM certificate file, used in addition to the system trust store
+# when the server certificate cannot be validated against it (private CA,
+# self-signed). Leave empty to rely on the system trust store alone
+certificate =
+# Set to true to skip certificate validation entirely
+bypass_certificate = false
 
 [scanner]
 # OFFLINE or ONLINE

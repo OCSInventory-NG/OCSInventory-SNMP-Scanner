@@ -5,10 +5,12 @@ import json
 import logging
 import os
 import socket
+import ssl
 import uuid
 from datetime import datetime
 
 import requests
+import urllib3
 from pysnmp.hlapi.asyncio import (
     CommunityData,
     ContextData,
@@ -24,9 +26,29 @@ from pysnmp.hlapi.asyncio import (
     usmHMACSHAAuthProtocol,
 )
 from pysnmp.smi import builder, compiler, view
+from requests.adapters import HTTPAdapter
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 VERSION = "3.0.0"
+
+
+class SystemStoreAdapter(HTTPAdapter):
+    """Verify server certificates against the system trust store.
+
+    This adapter uses the OpenSSL default paths, so the system store is used.
+    A cafile is added on top of it rather than replacing it.
+    """
+
+    def __init__(self, cafile=None, **kwargs):
+        self.cafile = cafile
+        super().__init__(**kwargs)
+
+    def init_poolmanager(self, *args, **kwargs):
+        context = ssl.create_default_context()
+        if self.cafile:
+            context.load_verify_locations(cafile=self.cafile)
+        kwargs["ssl_context"] = context
+        return super().init_poolmanager(*args, **kwargs)
 
 
 class SNMPScanner:
@@ -60,6 +82,9 @@ class SNMPScanner:
             ),
         )
         logging.info(f"Starting SNMP scanner v{VERSION}...")
+        self.certificate_logged = False
+        self.log_certificate_mode()
+        self.session = self.create_session()
         # endpoints
         self.auth_endpoint = "/api-auth/token"
         self.config_endpoint = "/snmp/config/"
@@ -143,6 +168,10 @@ class SNMPScanner:
                 "password": config.get("auth", "ocs_password"),
             }
             self.base_url = config.get("api", "ocs_base_url")
+            self.certificate = config.get("api", "certificate", fallback="").strip()
+            self.bypass_certificate = config.getboolean(
+                "api", "bypass_certificate", fallback=False
+            )
             self.mode = config.get("scanner", "scanner_mode")
             self.inventoy_dir = DIR + "/" + config.get("scanner", "local_inventory_dir")
             self.log_level = config.get("scanner", "log_level")
@@ -155,6 +184,99 @@ class SNMPScanner:
             self.server_log_level = config.get(
                 "scanner", "server_log_level", fallback="WARNING"
             ).upper()
+
+    def is_https(self):
+        return self.base_url.lower().startswith("https")
+
+    def certificate_file_exists(self):
+        return bool(self.certificate) and os.path.isfile(self.certificate)
+
+    def create_session(self, use_certificate_file=False):
+        """Build a requests session applying the configured TLS policy."""
+        session = requests.Session()
+        if not self.is_https():
+            return session
+        if self.bypass_certificate:
+            # would otherwise warn on every single request
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            session.verify = False
+            return session
+        cafile = None
+        if use_certificate_file and self.certificate_file_exists():
+            cafile = self.certificate
+            if not self.certificate_logged:
+                logging.info(f"Using certificate file: {cafile}")
+                self.certificate_logged = True
+        session.mount("https://", SystemStoreAdapter(cafile))
+        return session
+
+    def log_certificate_mode(self):
+        """Log which TLS mode is active, once at startup."""
+        if not self.is_https():
+            logging.info("Certificate mode: TLS disabled (HTTP).")
+            return
+        if self.bypass_certificate:
+            logging.warning(
+                "Certificate mode: TLS validation bypassed "
+                "(bypass_certificate=true, insecure)."
+            )
+            return
+        if self.certificate_file_exists():
+            logging.info(
+                "Certificate mode: TLS enabled (system store), fallback "
+                f"certificate path available: {self.certificate}"
+            )
+            return
+        if self.certificate:
+            logging.warning(
+                f"Configured certificate file not found: {self.certificate}"
+            )
+        logging.info(
+            "Certificate mode: TLS enabled (system store), no fallback "
+            "certificate path available."
+        )
+
+    def should_try_certificate_fallback(self):
+        return (
+            self.is_https()
+            and not self.bypass_certificate
+            and self.certificate_file_exists()
+        )
+
+    def request(self, method, url, **kwargs):
+        """Send a request, retrying with the certificate file on TLS failure.
+
+        The system trust store is always tried first, so the configured
+        certificate extends the trusted roots instead of replacing them.
+        """
+        try:
+            return self.session.request(method, url, **kwargs)
+        except requests.exceptions.SSLError as primary_error:
+            if not self.should_try_certificate_fallback():
+                logging.error(
+                    "TLS validation failed using system store. "
+                    f"Scanned certificate paths: [{self.certificate}]. "
+                    f"Error: {primary_error}"
+                )
+                raise
+            fallback = self.create_session(use_certificate_file=True)
+            try:
+                response = fallback.request(method, url, **kwargs)
+            except requests.exceptions.SSLError as fallback_error:
+                logging.error(
+                    "TLS validation failed with both system store and "
+                    "certificate file. Scanned certificate paths: "
+                    f"[{self.certificate}]. Primary error: {primary_error} | "
+                    f"Fallback error: {fallback_error}"
+                )
+                raise
+            else:
+                self.session.close()
+                self.session = fallback
+                return response
+            finally:
+                if self.session is not fallback:
+                    fallback.close()
 
     def server_logger(self, asset_id, log_level, scope, message):
         """
@@ -192,7 +314,7 @@ class SNMPScanner:
         }
         try:
             logging.debug(f"Sending server log: {payload}")
-            response = requests.post(url, json=payload, headers=headers)
+            response = self.request("POST", url, json=payload, headers=headers)
             if response.status_code in [200, 201]:
                 logging.info(
                     f"Server log sent for asset {asset_id} "
@@ -221,7 +343,7 @@ class SNMPScanner:
             logging.debug(
                 f"Attempting authentication with username: {auth_data['username']}"
             )
-            response = requests.post(url, json=payload, headers=headers)
+            response = self.request("POST", url, json=payload, headers=headers)
 
             if response.status_code == 200:
                 self.token = response.json()["token"]
@@ -263,7 +385,7 @@ class SNMPScanner:
             "Content-Type": "application/json",
             "Authorization": f"Token {self.token}",
         }
-        response = requests.get(check_enabled_url, headers=headers)
+        response = self.request("GET", check_enabled_url, headers=headers)
         if response.status_code == 200:
             # check if snmp is enabled
             if response.json()["value"][0]["value"] != 1:
@@ -354,7 +476,7 @@ class SNMPScanner:
             "Content-Type": "application/json",
             "Authorization": f"Token {self.token}",
         }
-        response = requests.get(url, headers=headers)
+        response = self.request("GET", url, headers=headers)
         if response.status_code == 200 and response.json():
             logging.info("Scanner instance retrieved successfully from OCS server")
             return response.json()[0]
@@ -396,7 +518,7 @@ class SNMPScanner:
         }
 
         if scanner:
-            response = requests.patch(url, json=payload, headers=headers)
+            response = self.request("PATCH", url, json=payload, headers=headers)
             if response.status_code == 200:
                 logging.info("Scanner instance updated successfully")
             else:
@@ -406,7 +528,7 @@ class SNMPScanner:
                 )
         else:
             payload["configs"] = []
-            response = requests.post(url, json=payload, headers=headers)
+            response = self.request("POST", url, json=payload, headers=headers)
             if response.status_code in [200, 201]:
                 logging.info("Scanner instance created successfully")
             else:
@@ -423,7 +545,7 @@ class SNMPScanner:
                 "Content-Type": "application/json",
                 "Authorization": f"Token {self.token}",
             }
-            response = requests.get(url, headers=headers)
+            response = self.request("GET", url, headers=headers)
 
             if response.status_code == 200:
                 self.config = response.json()
@@ -793,9 +915,13 @@ class SNMPScanner:
                     )
 
                     if method == "PUT":
-                        response = requests.put(url, json=device, headers=headers)
+                        response = self.request(
+                            "PUT", url, json=device, headers=headers
+                        )
                     elif method == "POST":
-                        response = requests.post(url, json=device, headers=headers)
+                        response = self.request(
+                            "POST", url, json=device, headers=headers
+                        )
                     else:
                         logging.error(
                             f"Invalid method {method} for device "
@@ -939,7 +1065,7 @@ class SNMPScanner:
         for result in self.formatted_results:
             # check if the device exists already
             url = asset_url + result["uuid"] + "&expand=*"
-            response = requests.get(url, headers=headers)
+            response = self.request("GET", url, headers=headers)
             if response.status_code == 200 and response.json():
                 existing_asset = response.json()[0]
                 asset_id = response.json()[0]["id"]

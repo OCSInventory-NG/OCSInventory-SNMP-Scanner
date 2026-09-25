@@ -106,6 +106,8 @@ The `scanner.conf` file contains the following sections and fields:
 	- `ocs_password` : the password of the SNMP user to authenticate with
 - `[api]` : contains the API endpoint information for the OCS server
 	- `ocs_base_url` : the URL of the OCS server
+	- `certificate` : path to a PEM certificate file, used in addition to the system trust store. Leave empty to rely on the system trust store alone. See [HTTPS and certificates](#https-and-certificates)
+	- `bypass_certificate` : set to `true` to skip certificate validation entirely (insecure, default `false`)
 - `[scanner]` : contains the scanner information
 	- `scanner_mode` : the mode to run the scanner in (`ONLINE` or `OFFLINE`)
 	- `local_inventory_dir` : the directory to store the inventory data in when running in `offline` mode
@@ -115,6 +117,29 @@ The `scanner.conf` file contains the following sections and fields:
   - `mibs_dir` : the MIB directory path
   - `server_logging_enabled` : enable server logging or not. Not used in `offline` mode
   - `server_log_level`: server log level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
+
+
+#### HTTPS and certificates
+
+If your OCS server is reached over `http://`, none of this applies and no certificate is needed.
+
+Over `https://`, the scanner validates the server certificate against the **system trust store**, so a CA deployed with `update-ca-certificates` (or the distribution equivalent) is enough and no configuration is needed.
+
+Set `certificate` to a PEM file when the certificate cannot be validated that way, typically a private CA or a self-signed certificate that is not installed system-wide. The system store is still tried first, the file is only used as a fallback, so it adds to the trusted roots rather than replacing them.
+
+```ini
+[api]
+ocs_base_url = https://ocs.example.com
+certificate = /etc/ssl/certs/ocs-ca.pem
+bypass_certificate = false
+```
+
+As a last resort, `bypass_certificate = true` disables validation altogether. This applies to **all** scanner traffic, credentials included, and should be limited to self-signed lab setups.
+
+The scanner states which mode is active at startup:
+```
+Certificate mode: TLS enabled (system store), fallback certificate path available: /etc/ssl/certs/ocs-ca.pem
+```
 
 
 #### Running the scanner
