@@ -30,9 +30,7 @@ from requests.adapters import HTTPAdapter
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 VERSION = "3.0.0"
-# used when max_concurrent_devices is absent or invalid
 DEFAULT_MAX_CONCURRENT_DEVICES = 50
-# number of devices queried through the same SNMP engine (see run_bounded)
 SCAN_BATCH_SIZE = 1000
 
 
@@ -181,8 +179,7 @@ class SNMPScanner:
             self.inventoy_dir = DIR + "/" + config.get("scanner", "local_inventory_dir")
             self.log_level = config.get("scanner", "log_level")
             self.targets = config.get("scanner", "targeted_subnets").split(",")
-            # logging is not set up yet: an invalid value is kept for
-            # log_scan_concurrency to report it
+            # logging is not set up yet: log_scan_concurrency reports it
             self.max_concurrent_devices = DEFAULT_MAX_CONCURRENT_DEVICES
             self.invalid_max_concurrent_devices = None
             value = config.get("scanner", "max_concurrent_devices", fallback=None)
@@ -256,7 +253,7 @@ class SNMPScanner:
         )
 
     def log_scan_concurrency(self):
-        """Log how many devices are queried at the same time, once at startup."""
+        """Log the scan concurrency, once at startup."""
         if self.invalid_max_concurrent_devices is not None:
             logging.warning(
                 "Invalid max_concurrent_devices value "
@@ -718,8 +715,8 @@ class SNMPScanner:
 
                                 results.append((oid_str, value_str))
                                 logging.debug(
-                                    f"Successfully processed OID: {oid_str} "
-                                    f"- Value: {value_str}"
+                                    f"Successfully processed OID for IP {ip}: "
+                                    f"{oid_str} - Value: {value_str}"
                                 )
 
                             except Exception as e:
@@ -790,8 +787,8 @@ class SNMPScanner:
 
                                     results.append((oid_str, value_str))
                                     logging.debug(
-                                        f"Successfully processed OID: {oid_str} "
-                                        f"- Value: {value_str}"
+                                        f"Successfully processed OID for IP {ip}: "
+                                        f"{oid_str} - Value: {value_str}"
                                     )
 
                                 except Exception as e:
@@ -820,32 +817,22 @@ class SNMPScanner:
             return None
 
     async def run_bounded(self, tasks, worker_fn):
-        """
-        Await worker_fn(snmp_engine, *task) for each task, max_concurrent_devices
-        at a time.
-
-        Results are returned in the order of tasks, whatever the order in
-        which the devices answer.
-        """
+        """Run worker_fn on each task concurrently; results keep the task order."""
         results = []
         for start in range(0, len(tasks), SCAN_BATCH_SIZE):
-            # one engine per batch of tasks: a new engine rebuilds its MIB
-            # parser (~0.5 s of CPU), but an engine also keeps a row for each
-            # IP it has queried and rereads all of them on most responses
+            # one engine per batch: costly to create, slower with each IP queried
             snmp_engine = SnmpEngine()
             try:
                 results += await self.run_batch(
                     snmp_engine, tasks[start : start + SCAN_BATCH_SIZE], worker_fn
                 )
             finally:
-                # releases the engine's socket
                 snmp_engine.close_dispatcher()
         return results
 
     async def run_batch(self, snmp_engine, tasks, worker_fn):
-        """Await worker_fn(snmp_engine, *task) for each task, in parallel."""
         results = [None] * len(tasks)
-        # shared by the workers, so each task is picked by a single one
+        # shared iterator: each task goes to a single worker
         pending = enumerate(tasks)
 
         async def worker():
@@ -866,7 +853,7 @@ class SNMPScanner:
         mode = "SNMP_GET"
         device_results = {}
         for name, oid in self.oids.items():
-            logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
+            logging.debug(f"Scanning '{name}' for IP {ip} - OID {oid} with mode {mode}")
             snmp_results = await self.snmp_scan(
                 snmp_engine, community, ip, oid, community["version"], mode
             )
@@ -876,7 +863,7 @@ class SNMPScanner:
                     device_results[name] = value
 
             else:
-                logging.debug("No SNMP response received")
+                logging.debug(f"No SNMP response received for IP {ip}, OID {oid}")
 
         return device_results
 
@@ -888,8 +875,7 @@ class SNMPScanner:
             (community, ip) for community in self.configs for ip in community["ips"]
         ]
         devices_results = await self.run_bounded(tasks, self.scan_device)
-        # merged in the order of a one-by-one scan: when several
-        # configurations get an answer from an IP, the last one wins
+        # as in a one-by-one scan, the last configuration answering wins
         for (community, ip), device_results in zip(tasks, devices_results):
             if device_results:
                 results[ip] = device_results
@@ -901,7 +887,7 @@ class SNMPScanner:
         return results
 
     async def advanced_scan_device(self, snmp_engine, community, ip, template):
-        """Scan one IP with one configuration, based on its decomposed template."""
+        """Scan one IP with one configuration, based on its template."""
         logging.debug(
             f"======== Advance scanning {ip} with community "
             f"'{community['name']}' and version "
@@ -909,12 +895,14 @@ class SNMPScanner:
         )
         device_results = {}
         for section_name, section in template.items():
-            logging.debug(f"Processing section {section_name}...")
+            logging.debug(f"Processing section {section_name} for IP {ip}...")
             for dic in section:
                 name = dic["name"]
                 oid = dic["retrieval_value"]
                 mode = dic["retrieval_method"]
-                logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
+                logging.debug(
+                    f"Scanning '{name}' for IP {ip} - OID {oid} with mode {mode}"
+                )
                 snmp_results = await self.snmp_scan(
                     snmp_engine, community, ip, oid, community["version"], mode
                 )
@@ -935,7 +923,7 @@ class SNMPScanner:
                             device_results[section_name] = [{name: value}]
                             index += 1
                 else:
-                    logging.debug("No SNMP response received")
+                    logging.debug(f"No SNMP response received for IP {ip}, OID {oid}")
 
         return device_results
 
@@ -958,7 +946,6 @@ class SNMPScanner:
             if ip in template_oids
         ]
         devices_results = await self.run_bounded(tasks, self.advanced_scan_device)
-        # same merge rule as scan_network
         for (community, ip, template), device_results in zip(tasks, devices_results):
             if device_results:
                 advanced_results[ip] = device_results
