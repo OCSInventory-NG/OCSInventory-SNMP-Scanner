@@ -112,6 +112,7 @@ The `scanner.conf` file contains the following sections and fields:
 	- `scanner_mode` : the mode to run the scanner in (`ONLINE` or `OFFLINE`)
 	- `local_inventory_dir` : the directory to store the inventory data in when running in `offline` mode
 	- `targeted_subnets` : the subnets to scan, separated by commas no spaces, used in `offline` mode
+	- `max_concurrent_devices` : the maximum number of devices queried at the same time (default `50`, `1` queries one device at a time). When the key is absent, or its value is not an integer of at least `1`, the default is used; an invalid value is also reported as a warning in the log. The value in use is logged at startup: `Scan concurrency: up to 50 devices at a time`
 	- `log_level` : the log level to use (INFO, DEBUG, WARNING, ERROR, CRITICAL)
 	- `name` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
   - `mibs_dir` : the MIB directory path

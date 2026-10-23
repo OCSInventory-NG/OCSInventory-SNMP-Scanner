@@ -30,6 +30,8 @@ from requests.adapters import HTTPAdapter
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 VERSION = "3.0.0"
+# used when max_concurrent_devices is absent or invalid
+DEFAULT_MAX_CONCURRENT_DEVICES = 50
 
 
 class SystemStoreAdapter(HTTPAdapter):
@@ -84,6 +86,7 @@ class SNMPScanner:
         logging.info(f"Starting SNMP scanner v{VERSION}...")
         self.certificate_logged = False
         self.log_certificate_mode()
+        self.log_scan_concurrency()
         self.session = self.create_session()
         # endpoints
         self.auth_endpoint = "/api-auth/token"
@@ -176,6 +179,20 @@ class SNMPScanner:
             self.inventoy_dir = DIR + "/" + config.get("scanner", "local_inventory_dir")
             self.log_level = config.get("scanner", "log_level")
             self.targets = config.get("scanner", "targeted_subnets").split(",")
+            # logging is not set up yet: an invalid value is kept for
+            # log_scan_concurrency to report it
+            self.max_concurrent_devices = DEFAULT_MAX_CONCURRENT_DEVICES
+            self.invalid_max_concurrent_devices = None
+            value = config.get("scanner", "max_concurrent_devices", fallback=None)
+            if value is not None:
+                try:
+                    max_concurrent_devices = int(value)
+                except ValueError:
+                    max_concurrent_devices = 0
+                if max_concurrent_devices >= 1:
+                    self.max_concurrent_devices = max_concurrent_devices
+                else:
+                    self.invalid_max_concurrent_devices = value
             self.name = config.get("scanner", "name")
             self.mibs_dir = config.get("scanner", "mibs_dir")
             self.server_logging_enabled = config.getboolean(
@@ -234,6 +251,18 @@ class SNMPScanner:
         logging.info(
             "Certificate mode: TLS enabled (system store), no fallback "
             "certificate path available."
+        )
+
+    def log_scan_concurrency(self):
+        """Log how many devices are queried at the same time, once at startup."""
+        if self.invalid_max_concurrent_devices is not None:
+            logging.warning(
+                "Invalid max_concurrent_devices value "
+                f"'{self.invalid_max_concurrent_devices}', expected an integer "
+                f">= 1: using the default ({DEFAULT_MAX_CONCURRENT_DEVICES})"
+            )
+        logging.info(
+            f"Scan concurrency: up to {self.max_concurrent_devices} devices at a time"
         )
 
     def should_try_certificate_fallback(self):
