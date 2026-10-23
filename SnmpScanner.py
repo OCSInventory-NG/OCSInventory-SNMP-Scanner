@@ -674,10 +674,11 @@ class SNMPScanner:
                     )
 
                     if error_indication:
-                        logging.error(f"SNMP error: {error_indication}")
+                        logging.error(f"SNMP error for IP {ip}: {error_indication}")
                     elif error_status:
                         logging.error(
-                            f"SNMP status error: {error_status.prettyPrint()}"
+                            f"SNMP status error for IP {ip}: "
+                            f"{error_status.prettyPrint()}"
                         )
                     else:
                         for var_bind in var_binds:
@@ -740,11 +741,12 @@ class SNMPScanner:
                         var_binds,
                     ) in await next:
                         if error_indication:
-                            logging.error(f"SNMP error: {error_indication}")
+                            logging.error(f"SNMP error for IP {ip}: {error_indication}")
                             break
                         elif error_status:
                             logging.error(
-                                f"SNMP status error: {error_status.prettyPrint()}"
+                                f"SNMP status error for IP {ip}: "
+                                f"{error_status.prettyPrint()}"
                             )
                             break
                         else:
