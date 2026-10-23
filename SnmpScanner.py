@@ -665,7 +665,7 @@ class SNMPScanner:
                 if mode == "SNMP_GET":
                     error_indication, error_status, error_index, var_binds = (
                         await get_cmd(
-                            SnmpEngine(),
+                            self.snmp_engine,
                             community_data,
                             transport,
                             ContextData(),
@@ -726,7 +726,7 @@ class SNMPScanner:
                 else:  # SNMP_WALK
 
                     next = next_cmd(
-                        SnmpEngine(),
+                        self.snmp_engine,
                         community_data,
                         transport,
                         ContextData(),
@@ -815,38 +815,114 @@ class SNMPScanner:
             logging.error(f"Critical error in SNMP scan for IP {ip}: {str(e)}")
             return None
 
+    async def run_bounded(self, tasks, worker_fn):
+        """
+        Await worker_fn(*task) for each task, max_concurrent_devices at a time.
+
+        Results are returned in the order of tasks, whatever the order in
+        which the devices answer.
+        """
+        results = [None] * len(tasks)
+        # shared by the workers, so each task is picked by a single one
+        pending = enumerate(tasks)
+
+        async def worker():
+            for index, task in pending:
+                results[index] = await worker_fn(*task)
+
+        nb_workers = min(self.max_concurrent_devices, len(tasks))
+        await asyncio.gather(*(worker() for _ in range(nb_workers)))
+        return results
+
+    async def scan_device(self, community, ip):
+        """Scan one IP with one configuration, based on fixed OIDs."""
+        logging.debug(
+            f"======== Scanning {ip} with community "
+            f"'{community['name']}' and version "
+            f"'{community['version']}' ========"
+        )
+        mode = "SNMP_GET"
+        device_results = {}
+        for name, oid in self.oids.items():
+            logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
+            snmp_results = await self.snmp_scan(
+                community, ip, oid, community["version"], mode
+            )
+
+            if snmp_results:
+                for oid, value in snmp_results:
+                    device_results[name] = value
+
+            else:
+                logging.debug("No SNMP response received")
+
+        return device_results
+
     async def scan_network(self):
         """Scan the network for SNMP devices, based on fixed OIDs."""
         results = {}
         logging.info("Starting network scan...")
-        mode = "SNMP_GET"
-        for community in self.configs:
-            for ip in community["ips"]:
-                logging.debug(
-                    f"======== Scanning {ip} with community "
-                    f"'{community['name']}' and version "
-                    f"'{community['version']}' ========"
-                )
-                self.nb_scanned += 1
-                device_results = {}
-                for name, oid in self.oids.items():
-                    logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
-                    snmp_results = await self.snmp_scan(
-                        community, ip, oid, community["version"], mode
-                    )
+        tasks = [
+            (community, ip) for community in self.configs for ip in community["ips"]
+        ]
+        # one engine for all the requests: a new engine rebuilds its MIB
+        # parser (~0.5 s of CPU), which concurrent requests cannot overlap.
+        # Closing it releases its socket
+        self.snmp_engine = SnmpEngine()
+        try:
+            devices_results = await self.run_bounded(tasks, self.scan_device)
+        finally:
+            self.snmp_engine.close_dispatcher()
+        # merged in the order of a one-by-one scan: when several
+        # configurations get an answer from an IP, the last one wins
+        for (community, ip), device_results in zip(tasks, devices_results):
+            if device_results:
+                results[ip] = device_results
 
-                    if snmp_results:
-                        for oid, value in snmp_results:
-                            device_results[name] = value
-                        results[ip] = device_results
-
-                    else:
-                        logging.debug("No SNMP response received")
-
+        self.nb_scanned += len(tasks)
         # count the number of devices found
         self.nb_found = len(results)
 
         return results
+
+    async def advanced_scan_device(self, community, ip, template):
+        """Scan one IP with one configuration, based on its decomposed template."""
+        logging.debug(
+            f"======== Advance scanning {ip} with community "
+            f"'{community['name']}' and version "
+            f"'{community['version']}' ========"
+        )
+        device_results = {}
+        for section_name, section in template.items():
+            logging.debug(f"Processing section {section_name}...")
+            for dic in section:
+                name = dic["name"]
+                oid = dic["retrieval_value"]
+                mode = dic["retrieval_method"]
+                logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
+                snmp_results = await self.snmp_scan(
+                    community, ip, oid, community["version"], mode
+                )
+
+                if snmp_results:
+                    index = 0
+                    for oid, value in snmp_results:
+                        if section_name in device_results:
+                            # use index of the value in snmp_results
+                            # to keep track of the order
+                            if index < len(device_results[section_name]):
+                                device_results[section_name][index][name] = value
+                                index += 1
+                            else:
+                                device_results[section_name].append({name: value})
+                                index += 1
+                        else:
+                            device_results[section_name] = [{name: value}]
+                            index += 1
+                else:
+                    logging.debug("No SNMP response received")
+
+        return device_results
 
     async def advanced_scan(self):
         """Perform advanced scans based on the templates."""
@@ -860,50 +936,21 @@ class SNMPScanner:
                 )
             result.pop("template")
 
-        for community in self.configs:
-            for ip in community["ips"]:
-                logging.debug(
-                    f"======== Advance scanning {ip} with community "
-                    f"'{community['name']}' and version "
-                    f"'{community['version']}' ========"
-                )
-                device_results = {}
-                if ip in template_oids:
-                    for section_name, section in template_oids[ip].items():
-                        logging.debug(f"Processing section {section_name}...")
-                        for dic in section:
-                            name = dic["name"]
-                            oid = dic["retrieval_value"]
-                            mode = dic["retrieval_method"]
-                            logging.debug(
-                                f"Scanning '{name}' - OID {oid} with mode {mode}"
-                            )
-                            snmp_results = await self.snmp_scan(
-                                community, ip, oid, community["version"], mode
-                            )
-
-                            if snmp_results:
-                                index = 0
-                                for oid, value in snmp_results:
-                                    if section_name in device_results:
-                                        # use index of the value in snmp_results
-                                        # to keep track of the order
-                                        if index < len(device_results[section_name]):
-                                            device_results[section_name][index][
-                                                name
-                                            ] = value
-                                            index += 1
-                                        else:
-                                            device_results[section_name].append(
-                                                {name: value}
-                                            )
-                                            index += 1
-                                    else:
-                                        device_results[section_name] = [{name: value}]
-                                        index += 1
-                                advanced_results[ip] = device_results
-                            else:
-                                logging.debug("No SNMP response received")
+        tasks = [
+            (community, ip, template_oids[ip])
+            for community in self.configs
+            for ip in community["ips"]
+            if ip in template_oids
+        ]
+        # same engine lifetime and merge rule as scan_network
+        self.snmp_engine = SnmpEngine()
+        try:
+            devices_results = await self.run_bounded(tasks, self.advanced_scan_device)
+        finally:
+            self.snmp_engine.close_dispatcher()
+        for (community, ip, template), device_results in zip(tasks, devices_results):
+            if device_results:
+                advanced_results[ip] = device_results
 
         self.format_to_template(advanced_results)
         return advanced_results
