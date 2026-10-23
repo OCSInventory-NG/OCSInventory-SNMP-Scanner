@@ -32,6 +32,8 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 VERSION = "3.0.0"
 # used when max_concurrent_devices is absent or invalid
 DEFAULT_MAX_CONCURRENT_DEVICES = 50
+# number of devices queried through the same SNMP engine (see run_bounded)
+SCAN_BATCH_SIZE = 1000
 
 
 class SystemStoreAdapter(HTTPAdapter):
@@ -612,7 +614,9 @@ class SNMPScanner:
             subnets.append(network)
         return subnets
 
-    async def snmp_scan(self, community, ip, oid, version, mode="SNMP_GET"):
+    async def snmp_scan(
+        self, snmp_engine, community, ip, oid, version, mode="SNMP_GET"
+    ):
         """Scan the network for SNMP devices."""
         try:
             transport = await UdpTransportTarget.create(
@@ -665,7 +669,7 @@ class SNMPScanner:
                 if mode == "SNMP_GET":
                     error_indication, error_status, error_index, var_binds = (
                         await get_cmd(
-                            self.snmp_engine,
+                            snmp_engine,
                             community_data,
                             transport,
                             ContextData(),
@@ -726,7 +730,7 @@ class SNMPScanner:
                 else:  # SNMP_WALK
 
                     next = next_cmd(
-                        self.snmp_engine,
+                        snmp_engine,
                         community_data,
                         transport,
                         ContextData(),
@@ -817,24 +821,42 @@ class SNMPScanner:
 
     async def run_bounded(self, tasks, worker_fn):
         """
-        Await worker_fn(*task) for each task, max_concurrent_devices at a time.
+        Await worker_fn(snmp_engine, *task) for each task, max_concurrent_devices
+        at a time.
 
         Results are returned in the order of tasks, whatever the order in
         which the devices answer.
         """
+        results = []
+        for start in range(0, len(tasks), SCAN_BATCH_SIZE):
+            # one engine per batch of tasks: a new engine rebuilds its MIB
+            # parser (~0.5 s of CPU), but an engine also keeps a row for each
+            # IP it has queried and rereads all of them on most responses
+            snmp_engine = SnmpEngine()
+            try:
+                results += await self.run_batch(
+                    snmp_engine, tasks[start : start + SCAN_BATCH_SIZE], worker_fn
+                )
+            finally:
+                # releases the engine's socket
+                snmp_engine.close_dispatcher()
+        return results
+
+    async def run_batch(self, snmp_engine, tasks, worker_fn):
+        """Await worker_fn(snmp_engine, *task) for each task, in parallel."""
         results = [None] * len(tasks)
         # shared by the workers, so each task is picked by a single one
         pending = enumerate(tasks)
 
         async def worker():
             for index, task in pending:
-                results[index] = await worker_fn(*task)
+                results[index] = await worker_fn(snmp_engine, *task)
 
         nb_workers = min(self.max_concurrent_devices, len(tasks))
         await asyncio.gather(*(worker() for _ in range(nb_workers)))
         return results
 
-    async def scan_device(self, community, ip):
+    async def scan_device(self, snmp_engine, community, ip):
         """Scan one IP with one configuration, based on fixed OIDs."""
         logging.debug(
             f"======== Scanning {ip} with community "
@@ -846,7 +868,7 @@ class SNMPScanner:
         for name, oid in self.oids.items():
             logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
             snmp_results = await self.snmp_scan(
-                community, ip, oid, community["version"], mode
+                snmp_engine, community, ip, oid, community["version"], mode
             )
 
             if snmp_results:
@@ -865,14 +887,7 @@ class SNMPScanner:
         tasks = [
             (community, ip) for community in self.configs for ip in community["ips"]
         ]
-        # one engine for all the requests: a new engine rebuilds its MIB
-        # parser (~0.5 s of CPU), which concurrent requests cannot overlap.
-        # Closing it releases its socket
-        self.snmp_engine = SnmpEngine()
-        try:
-            devices_results = await self.run_bounded(tasks, self.scan_device)
-        finally:
-            self.snmp_engine.close_dispatcher()
+        devices_results = await self.run_bounded(tasks, self.scan_device)
         # merged in the order of a one-by-one scan: when several
         # configurations get an answer from an IP, the last one wins
         for (community, ip), device_results in zip(tasks, devices_results):
@@ -885,7 +900,7 @@ class SNMPScanner:
 
         return results
 
-    async def advanced_scan_device(self, community, ip, template):
+    async def advanced_scan_device(self, snmp_engine, community, ip, template):
         """Scan one IP with one configuration, based on its decomposed template."""
         logging.debug(
             f"======== Advance scanning {ip} with community "
@@ -901,7 +916,7 @@ class SNMPScanner:
                 mode = dic["retrieval_method"]
                 logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
                 snmp_results = await self.snmp_scan(
-                    community, ip, oid, community["version"], mode
+                    snmp_engine, community, ip, oid, community["version"], mode
                 )
 
                 if snmp_results:
@@ -942,12 +957,8 @@ class SNMPScanner:
             for ip in community["ips"]
             if ip in template_oids
         ]
-        # same engine lifetime and merge rule as scan_network
-        self.snmp_engine = SnmpEngine()
-        try:
-            devices_results = await self.run_bounded(tasks, self.advanced_scan_device)
-        finally:
-            self.snmp_engine.close_dispatcher()
+        devices_results = await self.run_bounded(tasks, self.advanced_scan_device)
+        # same merge rule as scan_network
         for (community, ip, template), device_results in zip(tasks, devices_results):
             if device_results:
                 advanced_results[ip] = device_results
