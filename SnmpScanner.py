@@ -921,8 +921,14 @@ class SNMPScanner:
         # decomposed structure
         decomposed = {}
         for section in data["sections"]:
+            # the server refuses data for an inactive section
+            if not section.get("is_active", True):
+                logging.debug(f"Skipping inactive section {section['name']}")
+                continue
             section_dict = []
             for field in section["fields"]:
+                if not field["retrieval_value"]:
+                    continue
                 field_dict = {}
                 # map the field name to its retrieval value
                 field_dict["name"] = field["name"]
