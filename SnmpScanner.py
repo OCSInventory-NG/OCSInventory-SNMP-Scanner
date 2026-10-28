@@ -32,6 +32,9 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 VERSION = "3.0.0"
 DEFAULT_MAX_CONCURRENT_DEVICES = 50
 SCAN_BATCH_SIZE = 1000
+# the server stores this for agents without a serial number and ignores it
+# when reconciling assets
+EMPTY_SERIAL = "Empty"
 
 
 class SystemStoreAdapter(HTTPAdapter):
@@ -100,7 +103,11 @@ class SNMPScanner:
             "description": "1.3.6.1.2.1.1.1.0",
             "name": "1.3.6.1.2.1.1.5.0",
             "srcmac": "1.3.6.1.2.1.2.2.1.6.1",
-            "serial": "1.3.6.1.2.1.47.1.1.1.1.11.1",
+        }
+        # walked in this order by get_serial
+        self.serial_oids = {
+            "ENTITY-MIB::entPhysicalSerialNum": "1.3.6.1.2.1.47.1.1.1.1.11",
+            "Printer-MIB::prtGeneralSerialNumber": "1.3.6.1.2.1.43.5.1.1.17",
         }
         self.nb_found = 0
         self.nb_scanned = 0
@@ -827,7 +834,35 @@ class SNMPScanner:
             else:
                 logging.debug(f"No SNMP response received for IP {ip}, OID {oid}")
 
+        # only devices that answered, a silent IP would time out again
+        if device_results:
+            device_results["serial"] = await self.get_serial(snmp_engine, community, ip)
+
         return device_results
+
+    async def get_serial(self, snmp_engine, community, ip):
+        """
+        Get the serial number of a device, walking the serial_oids columns.
+
+        The first non-empty value wins, whatever its index: the chassis is not
+        always entity 1 (e.g. 1001 on a switch stack). Falls back to
+        EMPTY_SERIAL, the server rejects an empty serial.
+        """
+        for mib, column in self.serial_oids.items():
+            snmp_results = await self.snmp_scan(
+                snmp_engine, community, ip, column, community["version"], "SNMP_WALK"
+            )
+            for oid, value in snmp_results or []:
+                serial = value.replace("\x00", "").strip()
+                if serial:
+                    logging.debug(f"Serial number of IP {ip} found in {mib}: {oid}")
+                    return serial
+
+        logging.warning(
+            f"No serial number found for IP {ip} in "
+            f"{', '.join(self.serial_oids)}, using '{EMPTY_SERIAL}'"
+        )
+        return EMPTY_SERIAL
 
     async def scan_network(self):
         """Scan the network for SNMP devices, based on fixed OIDs."""
@@ -984,16 +1019,20 @@ class SNMPScanner:
                         asset_id = response.json()["id"]
                         assets.append(asset_id)
                         # server logging
-                        self.server_logger(
-                            asset_id,
-                            "INFO",
-                            (
-                                "INVENTORY_BASE_INSERT"
-                                if method == "POST"
-                                else "INVENTORY_BASE_UPDATE"
-                            ),
-                            msg,
+                        scope = (
+                            "INVENTORY_BASE_INSERT"
+                            if method == "POST"
+                            else "INVENTORY_BASE_UPDATE"
                         )
+                        self.server_logger(asset_id, "INFO", scope, msg)
+                        if device["serial"] == EMPTY_SERIAL:
+                            self.server_logger(
+                                asset_id,
+                                "WARNING",
+                                scope,
+                                "No serial number found on the device, "
+                                f"stored as '{EMPTY_SERIAL}'",
+                            )
                     else:
                         logging.error(
                             f"Failed to {'create' if method == 'POST' else 'update'} "
