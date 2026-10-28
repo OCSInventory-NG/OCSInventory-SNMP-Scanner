@@ -811,23 +811,28 @@ class SNMPScanner:
         """Run worker_fn on each task concurrently; results keep the task order."""
         results = []
         for start in range(0, len(tasks), SCAN_BATCH_SIZE):
-            # one engine per batch: costly to create, slower with each IP queried
-            snmp_engine = self.create_snmp_engine()
+            batch = tasks[start : start + SCAN_BATCH_SIZE]
+            # one engine per batch: costly to create, slower with each IP queried;
+            # and per configuration: an engine holds a single v3 user per name
+            snmp_engines = {}
             try:
-                results += await self.run_batch(
-                    snmp_engine, tasks[start : start + SCAN_BATCH_SIZE], worker_fn
-                )
+                for community, *_ in batch:
+                    if id(community) not in snmp_engines:
+                        snmp_engines[id(community)] = self.create_snmp_engine()
+                results += await self.run_batch(snmp_engines, batch, worker_fn)
             finally:
-                snmp_engine.close_dispatcher()
+                for snmp_engine in snmp_engines.values():
+                    snmp_engine.close_dispatcher()
         return results
 
-    async def run_batch(self, snmp_engine, tasks, worker_fn):
+    async def run_batch(self, snmp_engines, tasks, worker_fn):
         results = [None] * len(tasks)
         # shared iterator: each task goes to a single worker
         pending = enumerate(tasks)
 
         async def worker():
             for index, task in pending:
+                snmp_engine = snmp_engines[id(task[0])]
                 results[index] = await worker_fn(snmp_engine, *task)
 
         nb_workers = min(self.max_concurrent_devices, len(tasks))
