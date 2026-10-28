@@ -616,8 +616,9 @@ class SNMPScanner:
         data_type = value.__class__.__name__
         if data_type == "OctetString":
             octets = value.asOctets()
-            # mac address ?
-            if len(octets) == 6:
+            printable = octets.isascii() and octets.decode().isprintable()
+            # a MAC address comes as 6 raw bytes, 6 printable characters stay text
+            if len(octets) == 6 and not printable:
                 return ":".join(f"{b:02x}" for b in octets)
             try:
                 return octets.decode("utf-8")
