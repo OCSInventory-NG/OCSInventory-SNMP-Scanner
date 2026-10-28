@@ -803,12 +803,16 @@ class SNMPScanner:
             logging.error(f"Critical error in SNMP scan for IP {ip}: {str(e)}")
             return None
 
+    def create_snmp_engine(self):
+        """Create an SNMP engine for the scan, to close with close_dispatcher()."""
+        return SnmpEngine()
+
     async def run_bounded(self, tasks, worker_fn):
         """Run worker_fn on each task concurrently; results keep the task order."""
         results = []
         for start in range(0, len(tasks), SCAN_BATCH_SIZE):
             # one engine per batch: costly to create, slower with each IP queried
-            snmp_engine = SnmpEngine()
+            snmp_engine = self.create_snmp_engine()
             try:
                 results += await self.run_batch(
                     snmp_engine, tasks[start : start + SCAN_BATCH_SIZE], worker_fn
