@@ -19,11 +19,11 @@ from pysnmp.hlapi.asyncio import (
     SnmpEngine,
     UdpTransportTarget,
     get_cmd,
-    next_cmd,
     usmAesCfb128Protocol,
     usmDESPrivProtocol,
     usmHMACMD5AuthProtocol,
     usmHMACSHAAuthProtocol,
+    walk_cmd,
 )
 from pysnmp.smi import builder, compiler, view
 from requests.adapters import HTTPAdapter
@@ -719,22 +719,19 @@ class SNMPScanner:
                                 )
                                 continue
                 else:  # SNMP_WALK
-
-                    next = next_cmd(
+                    async for (
+                        error_indication,
+                        error_status,
+                        error_index,
+                        var_binds,
+                    ) in walk_cmd(
                         snmp_engine,
                         community_data,
                         transport,
                         ContextData(),
                         ObjectType(ObjectIdentity(oid)),
                         lexicographicMode=False,
-                    )
-
-                    for (
-                        error_indication,
-                        error_status,
-                        error_index,
-                        var_binds,
-                    ) in await next:
+                    ):
                         if error_indication:
                             logging.error(f"SNMP error for IP {ip}: {error_indication}")
                             break
