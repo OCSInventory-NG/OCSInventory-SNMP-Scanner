@@ -611,6 +611,27 @@ class SNMPScanner:
             subnets.append(network)
         return subnets
 
+    def format_snmp_value(self, value):
+        """Convert an SNMP value to the string sent to OCS."""
+        data_type = value.__class__.__name__
+        if data_type == "OctetString":
+            octets = value.asOctets()
+            # mac address ?
+            if len(octets) == 6:
+                return ":".join(f"{b:02x}" for b in octets)
+            try:
+                return octets.decode("utf-8")
+            except UnicodeDecodeError:
+                return value.prettyPrint()
+        elif data_type == "TimeTicks":
+            ticks = int(value)
+            days, remain = divmod(ticks / 100, 86400)
+            hours, remain = divmod(remain, 3600)
+            minutes, seconds = divmod(remain, 60)
+            return f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
+        else:
+            return value.prettyPrint()
+
     async def snmp_scan(
         self, snmp_engine, community, ip, oid, version, mode="SNMP_GET"
     ):
@@ -684,35 +705,8 @@ class SNMPScanner:
                     else:
                         for var_bind in var_binds:
                             try:
-                                data_type = var_bind[1].__class__.__name__
                                 oid_str = str(var_bind[0])
-                                value_str = None
-                                if data_type == "OctetString":
-                                    # mac address ?
-                                    if len(var_bind[1].asOctets()) == 6:
-                                        value_str = ":".join(
-                                            f"{b:02x}" for b in var_bind[1].asOctets()
-                                        )
-                                    else:
-                                        try:
-                                            value_str = (
-                                                var_bind[1].asOctets().decode("utf-8")
-                                            )
-                                        except UnicodeDecodeError:
-                                            value_str = var_bind[1].prettyPrint()
-                                # timeticks data type
-                                elif data_type == "TimeTicks":
-                                    ticks = int(var_bind[1])
-                                    days, remain = divmod(ticks / 100, 86400)
-                                    hours, remain = divmod(remain, 3600)
-                                    minutes, seconds = divmod(remain, 60)
-                                    value_str = (
-                                        f"{int(days)}d {int(hours)}h "
-                                        f"{int(minutes)}m {int(seconds)}s"
-                                    )
-                                else:
-                                    value_str = var_bind[1].prettyPrint()
-
+                                value_str = self.format_snmp_value(var_bind[1])
                                 results.append((oid_str, value_str))
                                 logging.debug(
                                     f"Successfully processed OID for IP {ip}: "
@@ -753,38 +747,8 @@ class SNMPScanner:
                         else:
                             for var_bind in var_binds:
                                 try:
-                                    data_type = var_bind[1].__class__.__name__
                                     oid_str = str(var_bind[0])
-                                    value_str = None
-                                    if data_type == "OctetString":
-                                        # mac address ?
-                                        if len(var_bind[1].asOctets()) == 6:
-                                            value_str = ":".join(
-                                                f"{b:02x}"
-                                                for b in var_bind[1].asOctets()
-                                            )
-                                        else:
-                                            try:
-                                                value_str = (
-                                                    var_bind[1]
-                                                    .asOctets()
-                                                    .decode("utf-8")
-                                                )
-                                            except UnicodeDecodeError:
-                                                value_str = var_bind[1].prettyPrint()
-                                    # timeticks data type
-                                    elif data_type == "TimeTicks":
-                                        ticks = int(var_bind[1])
-                                        days, remain = divmod(ticks / 100, 86400)
-                                        hours, remain = divmod(remain, 3600)
-                                        minutes, seconds = divmod(remain, 60)
-                                        value_str = (
-                                            f"{int(days)}d {int(hours)}h "
-                                            f"{int(minutes)}m {int(seconds)}s"
-                                        )
-                                    else:
-                                        value_str = var_bind[1].prettyPrint()
-
+                                    value_str = self.format_snmp_value(var_bind[1])
                                     results.append((oid_str, value_str))
                                     logging.debug(
                                         f"Successfully processed OID for IP {ip}: "
