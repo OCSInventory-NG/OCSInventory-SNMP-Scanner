@@ -33,6 +33,7 @@ If a custom template is available for a device, the scanner performs an advanced
 ### Python
 See `requirements.txt` for the authoritative list and version bounds:
 - `pysnmp` (>= 7.1.6, < 8)
+- `cryptography` (>= 47), for SNMPv3 privacy (DES, AES)
 - `pysmi` (>= 1.6.2)
 - `requests`
 
