@@ -836,7 +836,14 @@ class SNMPScanner:
                 results[index] = await worker_fn(snmp_engine, *task)
 
         nb_workers = min(self.max_concurrent_devices, len(tasks))
-        await asyncio.gather(*(worker() for _ in range(nb_workers)))
+        workers = [asyncio.create_task(worker()) for _ in range(nb_workers)]
+        try:
+            await asyncio.gather(*workers)
+        finally:
+            # gather leaves the other workers running when one fails
+            for task in workers:
+                task.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
         return results
 
     async def scan_device(self, snmp_engine, community, ip):
