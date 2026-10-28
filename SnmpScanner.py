@@ -14,6 +14,9 @@ import urllib3
 from pysnmp.hlapi.asyncio import (
     CommunityData,
     ContextData,
+    EndOfMibView,
+    NoSuchInstance,
+    NoSuchObject,
     ObjectIdentity,
     ObjectType,
     SnmpEngine,
@@ -619,7 +622,10 @@ class SNMPScanner:
         return subnets
 
     def format_snmp_value(self, value):
-        """Convert an SNMP value to the string sent to OCS."""
+        """Convert an SNMP value to the string sent to OCS, None if there is none."""
+        # exceptions of RFC 3416, sent instead of a value
+        if isinstance(value, (NoSuchObject, NoSuchInstance, EndOfMibView)):
+            return None
         data_type = value.__class__.__name__
         if data_type == "OctetString":
             octets = value.asOctets()
@@ -715,6 +721,12 @@ class SNMPScanner:
                             try:
                                 oid_str = str(var_bind[0])
                                 value_str = self.format_snmp_value(var_bind[1])
+                                if value_str is None:
+                                    logging.debug(
+                                        f"No value for IP {ip}: {oid_str} - "
+                                        f"{var_bind[1].prettyPrint()}"
+                                    )
+                                    continue
                                 results.append((oid_str, value_str))
                                 logging.debug(
                                     f"Successfully processed OID for IP {ip}: "
@@ -754,6 +766,12 @@ class SNMPScanner:
                                 try:
                                     oid_str = str(var_bind[0])
                                     value_str = self.format_snmp_value(var_bind[1])
+                                    if value_str is None:
+                                        logging.debug(
+                                            f"No value for IP {ip}: {oid_str} - "
+                                            f"{var_bind[1].prettyPrint()}"
+                                        )
+                                        continue
                                     results.append((oid_str, value_str))
                                     logging.debug(
                                         f"Successfully processed OID for IP {ip}: "
