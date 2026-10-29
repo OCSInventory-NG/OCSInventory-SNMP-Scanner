@@ -556,16 +556,21 @@ class SNMPScanner:
             self.update_or_create_scanner()
             exit()
 
+        scanner_subnets = self.parse_subnet_list(scanner["subnets"])
         for config in configurations:
-            scanner_subnets = set(scanner.get("subnets"))
-            config_subnets = set(config["subnets"])
-            # check if the configuration's subnets match the scanner's subnets
-            matching_subnets = scanner_subnets.intersection(config_subnets)
+            # scan the addresses in both subnets: two overlapping CIDR blocks
+            # are nested, so their intersection is the smaller one
+            matching_subnets = [
+                max(config_subnet, scanner_subnet, key=lambda n: n.prefixlen)
+                for config_subnet in self.parse_subnet_list(config["subnets"])
+                for scanner_subnet in scanner_subnets
+                if config_subnet.overlaps(scanner_subnet)
+            ]
             if matching_subnets:
                 config["subnets"] = matching_subnets
                 processed_configs.append(config)
 
-            self.generate_ips_for_configs(processed_configs)
+        self.generate_ips_for_configs(processed_configs)
 
         if not processed_configs:
             logging.error(
@@ -582,6 +587,8 @@ class SNMPScanner:
             for subnet in config["subnets"]:
                 network = ipaddress.ip_network(subnet)
                 config["ips"] += [str(ip) for ip in network.hosts()]
+            # the subnets of a configuration may overlap
+            config["ips"] = list(dict.fromkeys(config["ips"]))
 
     def get_scanner_instance(self):
         """Get the scanner instance from the server, using scanner's name."""
