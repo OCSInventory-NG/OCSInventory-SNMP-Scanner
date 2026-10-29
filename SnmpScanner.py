@@ -4,6 +4,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import socket
 import ssl
 import uuid
@@ -29,6 +30,10 @@ from pysnmp.hlapi.asyncio import (
     usmHMACSHAAuthProtocol,
     walk_cmd,
 )
+from pysmi.codegen.pysnmp import baseMibs
+from pysmi.reader.localfile import FileReader
+from pysmi.reader.url import getReadersFromUrls
+from pysmi.searcher.pyfile import PyFileSearcher
 from pysnmp.smi import builder, compiler, view
 from requests.adapters import HTTPAdapter
 
@@ -42,6 +47,9 @@ EMPTY_SERIAL = "Empty"
 # the SNMPv3 protocols the server can configure
 AUTH_PROTOCOLS = {"MD5": usmHMACMD5AuthProtocol, "SHA": usmHMACSHAAuthProtocol}
 PRIV_PROTOCOLS = {"DES": usmDESPrivProtocol, "AES": usmAesCfb128Protocol}
+MIB_MODULE_RE = re.compile(
+    rb"^\s*([A-Za-z][\w-]*)\s+DEFINITIONS\b[^:]*::=\s*BEGIN", re.M
+)
 
 
 class SystemStoreAdapter(HTTPAdapter):
@@ -61,6 +69,17 @@ class SystemStoreAdapter(HTTPAdapter):
             context.load_verify_locations(cafile=self.cafile)
         kwargs["ssl_context"] = context
         return super().init_poolmanager(*args, **kwargs)
+
+
+class MibDirReader(FileReader):
+    """Find the MIBs of mibs_dir by module name, whatever their file name."""
+
+    def __init__(self, mibs_dir, files):
+        super().__init__(mibs_dir, recursive=False)
+        self.files = files
+
+    def get_mib_variants(self, mibname, **options):
+        return [(mibname, self.files[mibname])] if mibname in self.files else []
 
 
 class SNMPScanner:
@@ -122,7 +141,7 @@ class SNMPScanner:
         self.name = self.get_or_create_name()
         self.mib_builder = builder.MibBuilder()
         compiler.add_mib_compiler(self.mib_builder, sources=[self.mibs_dir])
-        self.load_mib_dir(self.mibs_dir)
+        self.mib_modules = self.load_mibs(self.mibs_dir)
         self.mib_view_controller = view.MibViewController(self.mib_builder)
         self.assets = []
         self.log_levels = {
@@ -147,25 +166,77 @@ class SNMPScanner:
                 config.write(configfile)
             return name
 
-    def load_mib_dir(self, mib_path):
-        """Load all MIB files in a directory."""
-        for root, dirs, files in os.walk(mib_path):
-            for file in files:
-                logging.debug(f"Loading MIB file: {file}")
-                mib_file = os.path.join(root, file)
-                self.load_mib_file(mib_file)
+    def load_mibs(self, mibs_dir):
+        """
+        Compile and load the MIBs of mibs_dir, return the modules loaded.
 
-            for dire in dirs:
-                logging.debug(f"Loading MIB directory: {dire}")
-                self.load_mib_dir(os.path.join(root, dire))
+        Imports are looked up in mibs_dir, then in the system MIB directories.
+        A MIB is compiled again only when its file changes.
+        """
+        files = {}
+        for root, _, names in os.walk(mibs_dir):
+            for name in names:
+                path = os.path.join(root, name)
+                try:
+                    with open(path, "rb") as f:
+                        modules = MIB_MODULE_RE.findall(f.read())
+                except OSError as e:
+                    logging.error(f"Cannot read MIB file {path}: {e}")
+                    continue
+                for module in map(bytes.decode, modules):
+                    if module in files:
+                        logging.warning(
+                            f"MIB {module} defined in {files[module]} and {path}, "
+                            f"using {path}"
+                        )
+                    files[module] = path
+        if not files:
+            logging.info(f"No MIB found in {mibs_dir}")
+            return []
 
-    def load_mib_file(self, mib_file):
-        """Load a MIB file."""
-        mib_name = os.path.splitext(os.path.basename(mib_file))[0]
-        try:
-            self.mib_builder.loadModules(mib_name)
-        except Exception as e:
-            logging.error(f"Error loading MIB {mib_name} from file {mib_file}: {e}")
+        mib_compiler = self.mib_builder.get_mib_compiler()
+        mib_compiler.add_sources(
+            MibDirReader(mibs_dir, files),
+            *getReadersFromUrls(*compiler.DEFAULT_SOURCES),
+        )
+        mib_compiler.add_searchers(PyFileSearcher(compiler.DEFAULT_DEST))
+        # without ignoreErrors, one broken MIB stops the others from compiling
+        statuses = mib_compiler.compile(*files, ignoreErrors=True)
+        missing = [name for name, status in statuses.items() if status == "missing"]
+        if missing:
+            logging.error(
+                f"MIBs imported but found neither in {mibs_dir} nor in the system "
+                f"MIB directories: {', '.join(missing)}"
+            )
+
+        ok = ("compiled", "untouched", "borrowed")
+        failed = [name for name, status in statuses.items() if status not in ok]
+        loaded = []
+        for module, path in files.items():
+            status = statuses.get(module)
+            # SMI definitions, built into pysnmp and pysmi
+            if module in baseMibs:
+                continue
+            if status not in ok:
+                error = getattr(status, "error", status)
+                logging.error(f"MIB {module} of {path} not compiled: {error}")
+                continue
+            try:
+                self.mib_builder.load_modules(module)
+            except Exception as e:
+                # pysmi writes a MIB even when one of its imports fails
+                imports = [name for name in failed if name in str(e)]
+                if imports:
+                    reason = f"imports {', '.join(imports)}, not compiled"
+                else:
+                    reason = str(e).rsplit(" caused by ", 1)[-1]
+                logging.error(f"MIB {module} of {path} not loaded: {reason}")
+                continue
+            loaded.append(module)
+        logging.info(
+            f"{len(loaded)} MIB modules loaded from {mibs_dir}: {', '.join(loaded)}"
+        )
+        return loaded
 
     def get_scanner_ip(self):
         """Get the local IP of the scanner."""

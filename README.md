@@ -118,7 +118,7 @@ The `scanner.conf` file contains the following sections and fields:
 	- `max_concurrent_devices` : the maximum number of devices queried at the same time (default `50`, `1` queries one device at a time). When the key is absent, or its value is not an integer of at least `1`, the default is used; an invalid value is also reported as a warning in the log. The value in use is logged at startup: `Scan concurrency: up to 50 devices at a time`
 	- `log_level` : the log level to use (INFO, DEBUG, WARNING, ERROR, CRITICAL)
 	- `name` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
-  - `mibs_dir` : the MIB directory path
+  - `mibs_dir` : the directory of your custom MIBs. See [Custom MIBs](#custom-mibs)
   - `server_logging_enabled` : enable server logging or not. Not used in `offline` mode
   - `server_log_level`: server log level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
 
@@ -143,6 +143,17 @@ As a last resort, `bypass_certificate = true` disables validation altogether. Th
 The scanner states which mode is active at startup:
 ```
 Certificate mode: TLS enabled (system store), fallback certificate path available: /etc/ssl/certs/ocs-ca.pem
+```
+
+#### Custom MIBs
+
+Put the MIB files of your devices in `mibs_dir`, subdirectories included. File names do not matter: each module is found by the name declared in its file (`ACME-MIB DEFINITIONS ::= BEGIN`), and files that declare none are ignored.
+
+The modules a MIB imports are looked up in `mibs_dir` first, then in `/usr/share/snmp/mibs` and `/usr/share/mibs`, where distributions install the standard MIBs (`snmp-mibs-downloader` package on Debian and Ubuntu).
+
+MIBs are compiled at startup into `~/.pysnmp/mibs` of the user running the scanner (`/var/lib/ocsinventory-snmp-scanner/.pysnmp/mibs` with the packages), and compiled again only when their file changes. A MIB that cannot be compiled or loaded is reported in the log with its file and the reason, for example a missing import; the other MIBs are loaded anyway. The startup log lists the modules loaded:
+```
+2 MIB modules loaded from /var/lib/ocsinventory-snmp-scanner/mibs: ACME-SMI, ACME-MIB
 ```
 
 
