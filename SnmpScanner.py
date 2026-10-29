@@ -931,11 +931,34 @@ class SNMPScanner:
         snmp_engine.cache["mibViewController"] = self.mib_view_controller
         return snmp_engine
 
+    def scan_tasks(self):
+        """List the (configuration, IP) pairs to scan, grouped by IP."""
+        # each IP keeps the order of the configurations: the last answering wins
+        configs_by_ip = {}
+        for community in self.configs:
+            for ip in community["ips"]:
+                configs_by_ip.setdefault(ip, []).append(community)
+        return [
+            (community, ip)
+            for ip, communities in configs_by_ip.items()
+            for community in communities
+        ]
+
+    def batch_tasks(self, tasks):
+        """Split tasks grouped by IP in batches of SCAN_BATCH_SIZE, keeping each IP."""
+        batch = []
+        for task in tasks:
+            if len(batch) >= SCAN_BATCH_SIZE and task[1] != batch[-1][1]:
+                yield batch
+                batch = []
+            batch.append(task)
+        if batch:
+            yield batch
+
     async def run_bounded(self, tasks, worker_fn):
         """Run worker_fn on each task concurrently; results keep the task order."""
         results = []
-        for start in range(0, len(tasks), SCAN_BATCH_SIZE):
-            batch = tasks[start : start + SCAN_BATCH_SIZE]
+        for batch in self.batch_tasks(tasks):
             # one engine per batch: costly to create, slower with each IP queried;
             # and per configuration: an engine holds a single v3 user per name
             snmp_engines = {}
@@ -1026,9 +1049,7 @@ class SNMPScanner:
         """Scan the network for SNMP devices, based on fixed OIDs."""
         results = {}
         logging.info("Starting network scan...")
-        tasks = [
-            (community, ip) for community in self.configs for ip in community["ips"]
-        ]
+        tasks = self.scan_tasks()
         devices_results = await self.run_bounded(tasks, self.scan_device)
         # as in a one-by-one scan, the last configuration answering wins
         for (community, ip), device_results in zip(tasks, devices_results):
@@ -1096,8 +1117,7 @@ class SNMPScanner:
 
         tasks = [
             (community, ip, template_oids[ip])
-            for community in self.configs
-            for ip in community["ips"]
+            for community, ip in self.scan_tasks()
             if ip in template_oids
         ]
         devices_results = await self.run_bounded(tasks, self.advanced_scan_device)
