@@ -59,7 +59,7 @@ SNMP must be enabled on the OCS server and at least one SNMP configuration must 
 - Privacy password : Privacy password to use (only for SNMPv3)
 - Retries : number of retries to perform when scanning a device
 - Timeout : timeout in seconds to wait for a response from a device
-- Subnets : list of subnets to scan, in CIDR notation. A scanner uses the configuration on the addresses that are both in these subnets and in its own `subnets` field: a configuration on `10.0.0.0/16` assigned to a scanner on `10.0.1.0/24` scans `10.0.1.0/24`, and the other way round
+- Subnets : list of subnets to scan, in CIDR notation. A scanner uses the configuration on the addresses that are both in these subnets and in its own `subnets` field: a configuration on `10.0.0.0/16` assigned to a scanner on `10.0.1.0/24` scans `10.0.1.0/24`, and the other way round. Invalid subnets, such as `192.168.1.1/24` (host bits set), are skipped with a warning
 
 > Configurations need to be assigned to the scanner in  OCS web interface. The scanner will use the `subnets` field to determine which configuration to use to scan which device.
 

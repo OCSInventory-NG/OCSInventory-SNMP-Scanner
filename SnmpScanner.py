@@ -556,13 +556,18 @@ class SNMPScanner:
             self.update_or_create_scanner()
             exit()
 
-        scanner_subnets = self.parse_subnet_list(scanner["subnets"])
+        scanner_subnets = self.parse_subnet_list(
+            scanner["subnets"], f"scanner {self.name}"
+        )
         for config in configurations:
+            config_subnets = self.parse_subnet_list(
+                config["subnets"], f"SNMP configuration {config.get('id')}"
+            )
             # scan the addresses in both subnets: two overlapping CIDR blocks
             # are nested, so their intersection is the smaller one
             matching_subnets = [
                 max(config_subnet, scanner_subnet, key=lambda n: n.prefixlen)
-                for config_subnet in self.parse_subnet_list(config["subnets"])
+                for config_subnet in config_subnets
                 for scanner_subnet in scanner_subnets
                 if config_subnet.overlaps(scanner_subnet)
             ]
@@ -584,8 +589,10 @@ class SNMPScanner:
         """Generate the list of IPs for each configuration."""
         for config in parsed_configs:
             config["ips"] = []
-            for subnet in config["subnets"]:
-                network = ipaddress.ip_network(subnet)
+            subnets = self.parse_subnet_list(
+                config["subnets"], f"SNMP configuration {config.get('id')}"
+            )
+            for network in subnets:
                 config["ips"] += [str(ip) for ip in network.hosts()]
             # the subnets of a configuration may overlap
             config["ips"] = list(dict.fromkeys(config["ips"]))
@@ -696,11 +703,15 @@ class SNMPScanner:
                 logging.error("Local SNMP configuration not found, exiting...")
                 exit()
 
-    def parse_subnet_list(self, subnet_str_list):
+    def parse_subnet_list(self, subnet_str_list, owner):
         """Parse a list of subnet strings into a list of IPNetwork objects."""
         subnets = []
         for subnet in subnet_str_list:
-            network = ipaddress.ip_network(subnet)
+            try:
+                network = ipaddress.ip_network(str(subnet).strip())
+            except ValueError as e:
+                logging.warning(f"Subnet of {owner} skipped: {e}")
+                continue
             subnets.append(network)
         return subnets
 
