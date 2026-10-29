@@ -21,6 +21,7 @@ from pysnmp.hlapi.asyncio import (
     ObjectType,
     SnmpEngine,
     UdpTransportTarget,
+    UsmUserData,
     get_cmd,
     usmAesCfb128Protocol,
     usmDESPrivProtocol,
@@ -38,6 +39,9 @@ SCAN_BATCH_SIZE = 1000
 # the server stores this for agents without a serial number and ignores it
 # when reconciling assets
 EMPTY_SERIAL = "Empty"
+# the SNMPv3 protocols the server can configure
+AUTH_PROTOCOLS = {"MD5": usmHMACMD5AuthProtocol, "SHA": usmHMACSHAAuthProtocol}
+PRIV_PROTOCOLS = {"DES": usmDESPrivProtocol, "AES": usmAesCfb128Protocol}
 
 
 class SystemStoreAdapter(HTTPAdapter):
@@ -646,6 +650,66 @@ class SNMPScanner:
         else:
             return value.prettyPrint()
 
+    def set_auth_data(self):
+        """Build the authentication data of each configuration, skip invalid ones."""
+        configs = []
+        for community in self.configs:
+            try:
+                community["auth_data"] = self.get_auth_data(community)
+            except ValueError as e:
+                # the name of a v1/v2c configuration is its community
+                logging.error(f"SNMP configuration {community.get('id')} skipped: {e}")
+                continue
+            configs.append(community)
+        self.configs = configs
+
+    def get_auth_data(self, community):
+        """Return the pysnmp authentication data, ValueError if it is invalid."""
+        version = community["version"]
+        if version == "1":
+            return CommunityData(community["name"], mpModel=0)
+        if version == "2c":
+            return CommunityData(community["name"], mpModel=1)
+        if version != "3":
+            raise ValueError(f"unknown SNMP version '{version}'")
+
+        user = community.get("user")
+        level = community.get("auth_level")
+        if not user:
+            raise ValueError("no SNMPv3 user")
+        if level == "noAuthNoPriv":
+            return UsmUserData(user)
+        if level not in ("authNoPriv", "authPriv"):
+            raise ValueError(f"unknown SNMPv3 security level '{level}'")
+
+        auth_protocol = AUTH_PROTOCOLS.get(community.get("auth_protocol"))
+        password = community.get("password") or ""
+        if not auth_protocol:
+            raise ValueError(
+                f"unknown authentication protocol '{community.get('auth_protocol')}'"
+            )
+        # RFC 3414, section 11.2
+        if len(password) < 8:
+            raise ValueError("authentication password shorter than 8 characters")
+        if level == "authNoPriv":
+            return UsmUserData(user, authKey=password, authProtocol=auth_protocol)
+
+        priv_protocol = PRIV_PROTOCOLS.get(community.get("priv_protocol"))
+        priv_password = community.get("priv_password") or ""
+        if not priv_protocol:
+            raise ValueError(
+                f"unknown privacy protocol '{community.get('priv_protocol')}'"
+            )
+        if len(priv_password) < 8:
+            raise ValueError("privacy password shorter than 8 characters")
+        return UsmUserData(
+            user,
+            authKey=password,
+            authProtocol=auth_protocol,
+            privKey=priv_password,
+            privProtocol=priv_protocol,
+        )
+
     async def snmp_scan(
         self, snmp_engine, community, ip, oid, version, mode="SNMP_GET"
     ):
@@ -660,41 +724,7 @@ class SNMPScanner:
                 f"Version: {version}, Mode: {mode}"
             )
 
-            if version == "1":
-                community_data = CommunityData(community["name"], mpModel=0)
-            elif version == "2c":
-                community_data = CommunityData(community["name"], mpModel=1)
-            elif version == "3":
-                # validate SNMP v3 user parameters
-                user = community.get("user", "")
-                password = community.get("password", "")
-                priv_password = community.get("priv_password", "")
-
-                auth_protocol = (
-                    usmHMACMD5AuthProtocol
-                    if community["auth_protocol"] == "MD5"
-                    else usmHMACSHAAuthProtocol
-                )
-                priv_protocol = (
-                    usmDESPrivProtocol
-                    if community["priv_protocol"] == "DES"
-                    else usmAesCfb128Protocol
-                )
-
-                if community["auth_level"] == "authNoPriv":
-                    community_data = CommunityData(
-                        user, authKey=password, authProtocol=auth_protocol
-                    )
-                elif community["auth_level"] == "authPriv":
-                    community_data = CommunityData(
-                        user,
-                        authKey=password,
-                        authProtocol=auth_protocol,
-                        privKey=priv_password,
-                        privProtocol=priv_protocol,
-                    )
-                else:
-                    community_data = CommunityData(user)
+            community_data = community["auth_data"]
 
             results = []
             try:
@@ -1220,6 +1250,7 @@ class SNMPScanner:
                 "configuration (403). Check OCS user permissions."
             )
             exit()
+        self.set_auth_data()
 
         # base scan
         scan_results = await self.scan_network()
