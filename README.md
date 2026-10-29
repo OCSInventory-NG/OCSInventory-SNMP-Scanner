@@ -149,6 +149,8 @@ Certificate mode: TLS enabled (system store), fallback certificate path availabl
 
 Put the MIB files of your devices in `mibs_dir`, subdirectories included. File names do not matter: each module is found by the name declared in its file (`ACME-MIB DEFINITIONS ::= BEGIN`), and files that declare none are ignored.
 
+The values of the objects defined in these MIBs, and in the MIBs they import, are formatted according to their definition: enumerations by name (`up` instead of `1`), object identifiers by name (`ACME-MIB::acmeSwitch24`), strings by their display hint (MAC addresses for example). The OIDs of the templates stay numeric.
+
 The modules a MIB imports are looked up in `mibs_dir` first, then in `/usr/share/snmp/mibs` and `/usr/share/mibs`, where distributions install the standard MIBs (`snmp-mibs-downloader` package on Debian and Ubuntu).
 
 MIBs are compiled at startup into `~/.pysnmp/mibs` of the user running the scanner (`/var/lib/ocsinventory-snmp-scanner/.pysnmp/mibs` with the packages), and compiled again only when their file changes. A MIB that cannot be compiled or loaded is reported in the log with its file and the reason, for example a missing import; the other MIBs are loaded anyway. The startup log lists the modules loaded:

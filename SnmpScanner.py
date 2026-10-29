@@ -34,7 +34,7 @@ from pysmi.codegen.pysnmp import baseMibs
 from pysmi.reader.localfile import FileReader
 from pysmi.reader.url import getReadersFromUrls
 from pysmi.searcher.pyfile import PyFileSearcher
-from pysnmp.smi import builder, compiler, view
+from pysnmp.smi import compiler, view
 from requests.adapters import HTTPAdapter
 
 DIR = os.path.dirname(os.path.abspath(__file__))
@@ -139,9 +139,10 @@ class SNMPScanner:
         self.nb_scanned = 0
         self.ip = self.get_scanner_ip()
         self.name = self.get_or_create_name()
-        self.mib_builder = builder.MibBuilder()
+        # the builder of an engine, so that standard MIBs resolve as in the engines
+        self.mib_builder = SnmpEngine().get_mib_builder()
         compiler.add_mib_compiler(self.mib_builder, sources=[self.mibs_dir])
-        self.mib_modules = self.load_mibs(self.mibs_dir)
+        self.load_mibs(self.mibs_dir)
         self.mib_view_controller = view.MibViewController(self.mib_builder)
         self.assets = []
         self.log_levels = {
@@ -906,7 +907,11 @@ class SNMPScanner:
 
     def create_snmp_engine(self):
         """Create an SNMP engine for the scan, to close with close_dispatcher()."""
-        return SnmpEngine()
+        snmp_engine = SnmpEngine()
+        # values resolved with the MIBs loaded at startup, shared by all engines:
+        # loading them in each engine takes seconds with hundreds of MIBs
+        snmp_engine.cache["mibViewController"] = self.mib_view_controller
+        return snmp_engine
 
     async def run_bounded(self, tasks, worker_fn):
         """Run worker_fn on each task concurrently; results keep the task order."""
