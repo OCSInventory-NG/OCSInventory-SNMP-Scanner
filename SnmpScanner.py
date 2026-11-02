@@ -1056,7 +1056,8 @@ class SNMPScanner:
             if device_results:
                 results[ip] = device_results
 
-        self.nb_scanned += len(tasks)
+        # an IP covered by several configurations is one device
+        self.nb_scanned += len({ip for _, ip in tasks})
         # count the number of devices found
         self.nb_found = len(results)
 
