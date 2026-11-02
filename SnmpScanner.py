@@ -34,6 +34,7 @@ from pysmi.codegen.pysnmp import baseMibs
 from pysmi.reader.localfile import FileReader
 from pysmi.reader.url import getReadersFromUrls
 from pysmi.searcher.pyfile import PyFileSearcher
+from pysnmp.proto import errind
 from pysnmp.smi import compiler, view
 from requests.adapters import HTTPAdapter
 
@@ -803,7 +804,7 @@ class SNMPScanner:
     async def snmp_scan(
         self, snmp_engine, community, ip, oid, version, mode="SNMP_GET"
     ):
-        """Scan the network for SNMP devices."""
+        """Query an OID: a list of (oid, value), None on a timeout or a failure."""
         try:
             transport = await UdpTransportTarget.create(
                 (ip, 161), community["timeout"], community["retries"]
@@ -831,6 +832,8 @@ class SNMPScanner:
 
                     if error_indication:
                         logging.error(f"SNMP error for IP {ip}: {error_indication}")
+                        if isinstance(error_indication, errind.RequestTimedOut):
+                            return None
                     elif error_status:
                         logging.error(
                             f"SNMP status error for IP {ip}: "
@@ -1007,6 +1010,9 @@ class SNMPScanner:
             snmp_results = await self.snmp_scan(
                 snmp_engine, community, ip, oid, community["version"], mode
             )
+            # a silent device: the next OIDs would time out as well
+            if snmp_results is None and not device_results:
+                break
 
             if snmp_results:
                 for oid, value in snmp_results:
