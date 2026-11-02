@@ -29,6 +29,8 @@ from pysnmp.smi import builder, compiler, view
 from requests.adapters import HTTPAdapter
 
 DIR = os.path.dirname(os.path.abspath(__file__))
+PHYS_ADDR_PREFIX = "1.3.6.1.2.1.2.2.1.6"
+
 VERSION = "3.0.0"
 
 
@@ -660,7 +662,7 @@ class SNMPScanner:
                                     # mac address ?
                                     if (
                                         len(var_bind[1].asOctets()) == 6
-                                        and oid_str.startswith("1.3.6.1.2.1.2.2.1.6")
+                                        and oid_str.startswith(PHYS_ADDR_PREFIX)
                                     ):
                                         value_str = ":".join(
                                             f"{b:02x}" for b in var_bind[1].asOctets()
@@ -731,7 +733,7 @@ class SNMPScanner:
                                         # mac address ?
                                         if (
                                             len(var_bind[1].asOctets()) == 6
-                                            and oid_str.startswith("1.3.6.1.2.1.2.2.1.6")
+                                            and oid_str.startswith(PHYS_ADDR_PREFIX)
                                         ):
                                             value_str = ":".join(
                                                 f"{b:02x}"
