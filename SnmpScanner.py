@@ -20,6 +20,7 @@ from pysnmp.hlapi.asyncio import (
     UdpTransportTarget,
     get_cmd,
     next_cmd,
+    walk_cmd,
     usmAesCfb128Protocol,
     usmDESPrivProtocol,
     usmHMACMD5AuthProtocol,
@@ -695,7 +696,7 @@ class SNMPScanner:
                                 continue
                 else:  # SNMP_WALK
 
-                    next = next_cmd(
+                    walk_generator = walk_cmd(
                         SnmpEngine(),
                         community_data,
                         transport,
@@ -704,12 +705,12 @@ class SNMPScanner:
                         lexicographicMode=False,
                     )
 
-                    for (
+                    async for (
                         error_indication,
                         error_status,
                         error_index,
                         var_binds,
-                    ) in await next:
+                    ) in walk_generator:
                         if error_indication:
                             logging.error(f"SNMP error: {error_indication}")
                             break
@@ -720,6 +721,12 @@ class SNMPScanner:
                             break
                         else:
                             for var_bind in var_binds:
+                                if var_bind[1].__class__.__name__ in (
+                                    "EndOfMibView",
+                                    "NoSuchObject",
+                                    "NoSuchInstance",
+                                ):
+                                    continue
                                 try:
                                     data_type = var_bind[1].__class__.__name__
                                     oid_str = str(var_bind[0])
