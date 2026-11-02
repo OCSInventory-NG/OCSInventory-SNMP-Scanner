@@ -19,7 +19,6 @@ from pysnmp.hlapi.asyncio import (
     SnmpEngine,
     UdpTransportTarget,
     get_cmd,
-    next_cmd,
     walk_cmd,
     usmAesCfb128Protocol,
     usmDESPrivProtocol,
