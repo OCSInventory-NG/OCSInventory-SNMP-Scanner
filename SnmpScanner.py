@@ -1045,11 +1045,10 @@ class SNMPScanner:
         )
         return EMPTY_SERIAL
 
-    async def scan_network(self):
+    async def scan_network(self, tasks):
         """Scan the network for SNMP devices, based on fixed OIDs."""
         results = {}
         logging.info("Starting network scan...")
-        tasks = self.scan_tasks()
         devices_results = await self.run_bounded(tasks, self.scan_device)
         # as in a one-by-one scan, the last configuration answering wins
         for (community, ip), device_results in zip(tasks, devices_results):
@@ -1059,7 +1058,7 @@ class SNMPScanner:
         # an IP covered by several configurations is one device
         self.nb_scanned += len({ip for _, ip in tasks})
         # count the number of devices found
-        self.nb_found = len(results)
+        self.nb_found += len(results)
 
         return results
 
@@ -1104,7 +1103,7 @@ class SNMPScanner:
 
         return device_results
 
-    async def advanced_scan(self):
+    async def advanced_scan(self, batch):
         """Perform advanced scans based on the templates."""
         advanced_results = {}
         template_oids = {}
@@ -1118,7 +1117,7 @@ class SNMPScanner:
 
         tasks = [
             (community, ip, template_oids[ip])
-            for community, ip in self.scan_tasks()
+            for community, ip in batch
             if ip in template_oids
         ]
         devices_results = await self.run_bounded(tasks, self.advanced_scan_device)
@@ -1250,23 +1249,24 @@ class SNMPScanner:
 
         return assets
 
-    def store_data_locally(self, data):
-        """Store inventories locally, naming the files with the device's uuid."""
+    def clear_local_inventories(self):
+        """Empty the local inventory directory before the scan."""
         if os.path.exists(self.inventoy_dir):
             for file in os.listdir(self.inventoy_dir):
-                # remove all files in the directory
                 os.remove(self.inventoy_dir + "/" + file)
-
-            for device in data:
-                filename = "/" + device["uuid"] + ".json"
-                with open(self.inventoy_dir + filename, "w") as file:
-                    json.dump(device, file)
-                    logging.info(f"Device {device['uuid']} stored locally")
         else:
             logging.error(
                 f"Local inventory directory {self.inventoy_dir} not found, exiting..."
             )
             exit()
+
+    def store_data_locally(self, data):
+        """Store inventories locally, naming the files with the device's uuid."""
+        for device in data:
+            filename = "/" + device["uuid"] + ".json"
+            with open(self.inventoy_dir + filename, "w") as file:
+                json.dump(device, file)
+                logging.info(f"Device {device['uuid']} stored locally")
 
     def format_to_base(self, results):
         """
@@ -1366,32 +1366,39 @@ class SNMPScanner:
             )
             exit()
         self.set_auth_data()
+        if self.mode == "OFFLINE":
+            self.clear_local_inventories()
 
-        # base scan
-        scan_results = await self.scan_network()
-        self.formatted_results = self.format_to_base(scan_results)
+        # each batch is sent before the next one is scanned: a stop loses one batch
+        batches = list(self.batch_tasks(self.scan_tasks()))
+        for number, batch in enumerate(batches, 1):
+            logging.info(f"Scanning batch {number}/{len(batches)}")
+            # base scan
+            scan_results = await self.scan_network(batch)
+            self.formatted_results = self.format_to_base(scan_results)
+
+            if self.mode == "ONLINE":
+                # associate formatted results with their appropriate templates,
+                # based on their uuid
+                self.get_templates()
+                # perform advanced scans based on templates
+                self.advanced_results = await self.advanced_scan(batch)
+                # sending inventory to OCS
+                self.assets += self.send_to_ocs()
+
+            elif self.mode == "OFFLINE":
+                self.store_data_locally(self.formatted_results)
 
         if self.mode == "ONLINE":
-            # associate formatted results with their appropriate templates,
-            # based on their uuid
-            self.get_templates()
-            # perform advanced scans based on templates
-            self.advanced_results = await self.advanced_scan()
-            # sending inventory to OCS
-            self.assets = self.send_to_ocs()
-            logging.info(
-                f"Scan complete. Found a total of {len(self.formatted_results)} devices"
-            )
+            logging.info(f"Scan complete. Found a total of {self.nb_found} devices")
             # create scanner instance
             self.scan_date = datetime.now()
             self.update_or_create_scanner()
 
         elif self.mode == "OFFLINE":
-            self.store_data_locally(self.formatted_results)
             logging.info(
                 f"Inventories stored locally in {self.inventoy_dir}. "
-                f"Scan complete. Found a total of "
-                f"{len(self.formatted_results)} devices."
+                f"Scan complete. Found a total of {self.nb_found} devices."
             )
 
 
