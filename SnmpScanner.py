@@ -658,7 +658,10 @@ class SNMPScanner:
                                 value_str = None
                                 if data_type == "OctetString":
                                     # mac address ?
-                                    if len(var_bind[1].asOctets()) == 6:
+                                    if (
+                                        len(var_bind[1].asOctets()) == 6
+                                        and oid_str.startswith("1.3.6.1.2.1.2.2.1.6")
+                                    ):
                                         value_str = ":".join(
                                             f"{b:02x}" for b in var_bind[1].asOctets()
                                         )
@@ -726,7 +729,10 @@ class SNMPScanner:
                                     value_str = None
                                     if data_type == "OctetString":
                                         # mac address ?
-                                        if len(var_bind[1].asOctets()) == 6:
+                                        if (
+                                            len(var_bind[1].asOctets()) == 6
+                                            and oid_str.startswith("1.3.6.1.2.1.2.2.1.6")
+                                        ):
                                             value_str = ":".join(
                                                 f"{b:02x}"
                                                 for b in var_bind[1].asOctets()
