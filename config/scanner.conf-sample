@@ -32,5 +32,8 @@ name =
 # running from a clone, point it at wherever your MIB files live. A missing
 # directory is not fatal, the scanner just falls back to its generic OIDs.
 mibs_dir = /var/lib/ocsinventory-snmp-scanner/mibs
+# OIDs walked in this order for the serial number, comma separated, without
+# the instance (.0). Empty: ENTITY-MIB then Printer-MIB
+serial_oids =
 server_logging_enabled = false
 server_log_level = WARNING

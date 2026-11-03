@@ -45,6 +45,12 @@ SCAN_BATCH_SIZE = 1000
 # the server stores this for agents without a serial number and ignores it
 # when reconciling assets
 EMPTY_SERIAL = "Empty"
+# walked in this order by get_serial, unless serial_oids is set
+DEFAULT_SERIAL_OIDS = {
+    "ENTITY-MIB::entPhysicalSerialNum": "1.3.6.1.2.1.47.1.1.1.1.11",
+    "Printer-MIB::prtGeneralSerialNumber": "1.3.6.1.2.1.43.5.1.1.17",
+}
+NUMERIC_OID_RE = re.compile(r"\.?[0-2](\.\d+)+")
 # the SNMPv3 protocols the server can configure
 AUTH_PROTOCOLS = {"MD5": usmHMACMD5AuthProtocol, "SHA": usmHMACSHAAuthProtocol}
 PRIV_PROTOCOLS = {"DES": usmDESPrivProtocol, "AES": usmAesCfb128Protocol}
@@ -131,11 +137,7 @@ class SNMPScanner:
             "name": "1.3.6.1.2.1.1.5.0",
             "srcmac": "1.3.6.1.2.1.2.2.1.6.1",
         }
-        # walked in this order by get_serial
-        self.serial_oids = {
-            "ENTITY-MIB::entPhysicalSerialNum": "1.3.6.1.2.1.47.1.1.1.1.11",
-            "Printer-MIB::prtGeneralSerialNumber": "1.3.6.1.2.1.43.5.1.1.17",
-        }
+        self.serial_oids = self.get_serial_oids()
         self.nb_found = 0
         self.nb_scanned = 0
         self.ip = self.get_scanner_ip()
@@ -281,6 +283,7 @@ class SNMPScanner:
                     self.invalid_max_concurrent_devices = value
             self.name = config.get("scanner", "name")
             self.mibs_dir = config.get("scanner", "mibs_dir")
+            self.serial_oids_setting = config.get("scanner", "serial_oids", fallback="")
             self.server_logging_enabled = config.getboolean(
                 "scanner", "server_logging_enabled", fallback=False
             )
@@ -350,6 +353,21 @@ class SNMPScanner:
         logging.info(
             f"Scan concurrency: up to {self.max_concurrent_devices} devices at a time"
         )
+
+    def get_serial_oids(self):
+        """The OIDs walked by get_serial: serial_oids if set, else the defaults."""
+        serial_oids = {}
+        for oid in self.serial_oids_setting.split(","):
+            oid = oid.strip()
+            if NUMERIC_OID_RE.fullmatch(oid):
+                serial_oids[oid.lstrip(".")] = oid.lstrip(".")
+            elif oid:
+                logging.warning(f"serial_oids entry '{oid}' skipped: not a numeric OID")
+        if serial_oids:
+            return serial_oids
+        if self.serial_oids_setting.strip():
+            logging.warning("No valid OID in serial_oids, using the default ones")
+        return dict(DEFAULT_SERIAL_OIDS)
 
     def should_try_certificate_fallback(self):
         return (
