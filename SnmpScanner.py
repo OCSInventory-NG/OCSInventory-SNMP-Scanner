@@ -12,6 +12,10 @@ from datetime import datetime
 
 import requests
 import urllib3
+from pysmi.codegen.pysnmp import baseMibs
+from pysmi.reader.localfile import FileReader
+from pysmi.reader.url import getReadersFromUrls
+from pysmi.searcher.pyfile import PyFileSearcher
 from pysnmp.hlapi.asyncio import (
     CommunityData,
     ContextData,
@@ -30,10 +34,6 @@ from pysnmp.hlapi.asyncio import (
     usmHMACSHAAuthProtocol,
     walk_cmd,
 )
-from pysmi.codegen.pysnmp import baseMibs
-from pysmi.reader.localfile import FileReader
-from pysmi.reader.url import getReadersFromUrls
-from pysmi.searcher.pyfile import PyFileSearcher
 from pysnmp.proto import errind
 from pysnmp.smi import compiler, view
 from requests.adapters import HTTPAdapter
