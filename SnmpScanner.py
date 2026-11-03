@@ -254,7 +254,7 @@ class SNMPScanner:
         config = configparser.ConfigParser()
         if not os.path.exists(DIR + "/config/scanner.conf"):
             logging.error("Configuration file not found, exiting...")
-            exit()
+            exit(1)
         else:
             config.read(DIR + "/config/scanner.conf")
             self.auth_data = {
@@ -525,14 +525,14 @@ class SNMPScanner:
             # check if snmp is enabled
             if response.json()["value"][0]["value"] != 1:
                 logging.error("SNMP is not enabled on the server, exiting...")
-                exit()
+                exit(1)
             else:
                 logging.info("SNMP is enabled on the server")
         else:
             logging.error(
                 f"Failed to retrieve SNMP enabled status: {response.status_code}"
             )
-            exit()
+            exit(1)
 
         processed_configs = []
         # get scanner details
@@ -561,7 +561,7 @@ class SNMPScanner:
             logging.error(
                 "No subnets defined in local configuration or on the server, exiting..."
             )
-            exit()
+            exit(1)
 
         # getting configs from the server
         # if we did get the scanner instance, we already have configs
@@ -575,7 +575,7 @@ class SNMPScanner:
             # we are not updating last scan date if no scan is performed
             self.scan_date = None
             self.update_or_create_scanner()
-            exit()
+            exit(1)
 
         scanner_subnets = self.parse_subnet_list(
             scanner["subnets"], f"scanner {self.name}"
@@ -602,7 +602,7 @@ class SNMPScanner:
             logging.error(
                 "No SNMP configuration matching the scanner's subnets, exiting..."
             )
-            exit()
+            exit(1)
 
         return processed_configs
 
@@ -719,10 +719,10 @@ class SNMPScanner:
                         logging.info("Local SNMP configuration parsed successfully")
                 except Exception as e:
                     logging.error(f"Failed to parse local configuration: {e}")
-                    exit()
+                    exit(1)
             else:
                 logging.error("Local SNMP configuration not found, exiting...")
-                exit()
+                exit(1)
 
     def parse_subnet_list(self, subnet_str_list, owner):
         """Parse a list of subnet strings into a list of IPNetwork objects."""
@@ -1305,7 +1305,7 @@ class SNMPScanner:
             logging.error(
                 f"Local inventory directory {self.inventoy_dir} not found, exiting..."
             )
-            exit()
+            exit(1)
 
     def store_data_locally(self, data):
         """Store inventories locally, naming the files with the device's uuid."""
@@ -1405,18 +1405,16 @@ class SNMPScanner:
 
     async def run(self):
         """Main method to run the scanner."""
-        # if the scanner is in ONLINE mode and the server is not
-        # reachable, switch to OFFLINE mode
         if self.mode == "ONLINE" and not self.check_server():
-            logging.error("Server is not reachable, switching to OFFLINE mode...")
-            self.mode = "OFFLINE"
+            logging.error("Cannot authenticate on the OCS server, exiting...")
+            exit(1)
         self.retrieve_snmp_configuration()
         if not self.configs:
             logging.error(
                 "No SNMP configuration loaded : Failed to retrieve SNMP "
                 "configuration (403). Check OCS user permissions."
             )
-            exit()
+            exit(1)
         self.set_auth_data()
         if self.mode == "OFFLINE":
             self.clear_local_inventories()
