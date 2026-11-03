@@ -19,7 +19,7 @@ The scanner supports SNMPv1, SNMPv2c and SNMPv3. The version to use is either sp
 #### Basic scan
 The basic scan is performed using a hardcoded base template corresponding to the InventoryBase model fields. The scanner purposefully uses generic OIDs to populate the fields, as the goal is to retrieve as much information as possible from the devices, regardless of their type. The basic scan is performed for all devices, regardless of whether or not a custom template is available for them.
 
-No generic OID holds a serial number on every device, so the scanner walks ENTITY-MIB `entPhysicalSerialNum` (`1.3.6.1.2.1.47.1.1.1.1.11`), then Printer-MIB `prtGeneralSerialNumber` (`1.3.6.1.2.1.43.5.1.1.17`), and keeps the first non-empty value. If neither returns one, the serial is set to `Empty`, the value the OCS server already stores for agents without a serial number. The `serial_oids` setting replaces these two OIDs.
+No generic OID holds a serial number on every device, so the scanner walks ENTITY-MIB `entPhysicalSerialNum` (`1.3.6.1.2.1.47.1.1.1.1.11`), then Printer-MIB `prtGeneralSerialNumber` (`1.3.6.1.2.1.43.5.1.1.17`), and keeps the first non-empty value. If neither returns one, the serial is set to `Empty`, the value the OCS server already stores for agents without a serial number. The `serial_oids` setting replaces these two OIDs. A device without a sysName is named after its IP.
 
 #### Advanced scan
 If a custom template is available for a device, the scanner performs an advanced scan using the custom template. The custom template is retrieved from the OCS server and contains a list of OIDs (fields) regrouped in sections. The scanner uses the OIDs to retrieve the corresponding values from the devices and populates the fields with the values.

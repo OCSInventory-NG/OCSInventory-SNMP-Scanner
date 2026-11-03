@@ -1344,6 +1344,11 @@ class SNMPScanner:
                     if value:
                         device_template[name] = value
 
+            # the server refuses an asset without a name
+            if not device_template["name"].strip():
+                logging.warning(f"No sysName for IP {ip}, using the IP as name")
+                device_template["name"] = ip
+
             if not device_template["uuid"]:
                 device_template["uuid"] = (
                     device_template["name"] + "-" + device_template["srcip"]
