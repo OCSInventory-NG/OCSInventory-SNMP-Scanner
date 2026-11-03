@@ -1023,9 +1023,8 @@ class SNMPScanner:
     async def scan_device(self, snmp_engine, community, ip):
         """Scan one IP with one configuration, based on fixed OIDs."""
         logging.debug(
-            f"======== Scanning {ip} with community "
-            f"'{community['name']}' and version "
-            f"'{community['version']}' ========"
+            f"======== Scanning {ip} with SNMP configuration "
+            f"{community.get('id')} (version {community['version']}) ========"
         )
         mode = "SNMP_GET"
         device_results = {}
@@ -1112,9 +1111,8 @@ class SNMPScanner:
     async def advanced_scan_device(self, snmp_engine, community, ip, template):
         """Scan one IP with one configuration, based on its template."""
         logging.debug(
-            f"======== Advance scanning {ip} with community "
-            f"'{community['name']}' and version "
-            f"'{community['version']}' ========"
+            f"======== Advance scanning {ip} with SNMP configuration "
+            f"{community.get('id')} (version {community['version']}) ========"
         )
         device_results = {}
         for section_name, section in template.items():
