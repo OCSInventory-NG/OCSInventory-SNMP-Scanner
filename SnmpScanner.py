@@ -629,7 +629,8 @@ class SNMPScanner:
         if response.status_code == 200 and response.json():
             logging.info("Scanner instance retrieved successfully from OCS server")
             return response.json()[0]
-        elif response.status_code == 404:
+        # an empty list: the scanner is not registered yet
+        elif response.status_code in (200, 404):
             logging.info(f"Scanner instance not found with name {self.name}")
             return None
         else:
