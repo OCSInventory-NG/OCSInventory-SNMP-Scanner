@@ -8,7 +8,7 @@ import re
 import socket
 import ssl
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 import urllib3
@@ -1444,7 +1444,7 @@ class SNMPScanner:
         if self.mode == "ONLINE":
             logging.info(f"Scan complete. Found a total of {self.nb_found} devices")
             # create scanner instance
-            self.scan_date = datetime.now()
+            self.scan_date = datetime.now(timezone.utc)
             self.update_or_create_scanner()
 
         elif self.mode == "OFFLINE":
