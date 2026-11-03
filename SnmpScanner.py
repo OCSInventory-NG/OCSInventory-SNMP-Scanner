@@ -51,6 +51,9 @@ DEFAULT_SERIAL_OIDS = {
     "Printer-MIB::prtGeneralSerialNumber": "1.3.6.1.2.1.43.5.1.1.17",
 }
 NUMERIC_OID_RE = re.compile(r"\.?[0-2](\.\d+)+")
+# IF-MIB ifPhysAddress column, walked for srcmac
+IF_PHYS_ADDRESS = "1.3.6.1.2.1.2.2.1.6"
+MAC_RE = re.compile(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}")
 # the SNMPv3 protocols the server can configure
 AUTH_PROTOCOLS = {"MD5": usmHMACMD5AuthProtocol, "SHA": usmHMACSHAAuthProtocol}
 PRIV_PROTOCOLS = {"DES": usmDESPrivProtocol, "AES": usmAesCfb128Protocol}
@@ -135,7 +138,6 @@ class SNMPScanner:
         self.oids = {
             "description": "1.3.6.1.2.1.1.1.0",
             "name": "1.3.6.1.2.1.1.5.0",
-            "srcmac": "1.3.6.1.2.1.2.2.1.6.1",
         }
         self.serial_oids = self.get_serial_oids()
         self.nb_found = 0
@@ -734,7 +736,7 @@ class SNMPScanner:
             subnets.append(network)
         return subnets
 
-    def format_snmp_value(self, value):
+    def format_snmp_value(self, oid, value):
         """Convert an SNMP value to the string sent to OCS, None if there is none."""
         # exceptions of RFC 3416, sent instead of a value
         if isinstance(value, (NoSuchObject, NoSuchInstance, EndOfMibView)):
@@ -744,7 +746,9 @@ class SNMPScanner:
             octets = value.asOctets()
             printable = octets.isascii() and octets.decode().isprintable()
             # a MAC address comes as 6 raw bytes, 6 printable characters stay text
-            if len(octets) == 6 and not printable:
+            # outside ifPhysAddress
+            in_phys_address = str(oid).startswith(IF_PHYS_ADDRESS + ".")
+            if len(octets) == 6 and (not printable or in_phys_address):
                 return ":".join(f"{b:02x}" for b in octets)
             try:
                 return octets.decode("utf-8")
@@ -861,7 +865,7 @@ class SNMPScanner:
                         for var_bind in var_binds:
                             try:
                                 oid_str = str(var_bind[0])
-                                value_str = self.format_snmp_value(var_bind[1])
+                                value_str = self.format_snmp_value(oid_str, var_bind[1])
                                 if value_str is None:
                                     logging.debug(
                                         f"No value for IP {ip}: {oid_str} - "
@@ -906,7 +910,9 @@ class SNMPScanner:
                             for var_bind in var_binds:
                                 try:
                                     oid_str = str(var_bind[0])
-                                    value_str = self.format_snmp_value(var_bind[1])
+                                    value_str = self.format_snmp_value(
+                                        oid_str, var_bind[1]
+                                    )
                                     if value_str is None:
                                         logging.debug(
                                             f"No value for IP {ip}: {oid_str} - "
@@ -1042,6 +1048,7 @@ class SNMPScanner:
         # only devices that answered, a silent IP would time out again
         if device_results:
             device_results["serial"] = await self.get_serial(snmp_engine, community, ip)
+            device_results["srcmac"] = await self.get_mac(snmp_engine, community, ip)
 
         return device_results
 
@@ -1068,6 +1075,22 @@ class SNMPScanner:
             f"{', '.join(self.serial_oids)}, using '{EMPTY_SERIAL}'"
         )
         return EMPTY_SERIAL
+
+    async def get_mac(self, snmp_engine, community, ip):
+        """The MAC address of the first interface that has one, empty if none."""
+        snmp_results = await self.snmp_scan(
+            snmp_engine,
+            community,
+            ip,
+            IF_PHYS_ADDRESS,
+            community["version"],
+            "SNMP_WALK",
+        )
+        for oid, value in snmp_results or []:
+            # loopbacks and tunnels have an empty or zero address
+            if MAC_RE.fullmatch(value) and value != "00:00:00:00:00:00":
+                return value
+        return ""
 
     async def scan_network(self, tasks):
         """Scan the network for SNMP devices, based on fixed OIDs."""
