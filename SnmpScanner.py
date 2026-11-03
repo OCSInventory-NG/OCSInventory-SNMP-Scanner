@@ -1213,6 +1213,7 @@ class SNMPScanner:
             for device in self.formatted_results:
                 try:
                     method = device.pop("method")
+                    asset_id = device.pop("asset_id", None)
                     logging.debug(
                         f"Processing device {device.get('uuid', 'unknown')} "
                         f"with method {method}"
@@ -1264,14 +1265,14 @@ class SNMPScanner:
                             f"device {device['uuid']}. "
                             f"Status: {response.status_code}, Response: {response.text}"
                         )
-
-                        self.server_logger(
-                            asset_id,
-                            "ERROR",
-                            "INVENTORY_BASE_ERR",
-                            f"Failed to {'create' if method == 'POST' else 'update'} "
-                            f"SNMP asset",
-                        )
+                        # a device that could not be created has no asset to log on
+                        if asset_id is not None:
+                            self.server_logger(
+                                asset_id,
+                                "ERROR",
+                                "INVENTORY_BASE_ERR",
+                                "Failed to update SNMP asset",
+                            )
 
                 except requests.exceptions.RequestException as e:
                     logging.error(
@@ -1384,6 +1385,7 @@ class SNMPScanner:
                 existing_asset = response.json()[0]
                 asset_id = response.json()[0]["id"]
                 result["method"] = "PUT"
+                result["asset_id"] = asset_id
                 # if a template has been assigned
                 if existing_asset.get("template"):
                     result["template"] = existing_asset["template"]
