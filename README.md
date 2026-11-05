@@ -119,7 +119,7 @@ The `scanner.conf` file contains the following sections and fields:
 	- `log_level` : the log level to use (INFO, DEBUG, WARNING, ERROR, CRITICAL)
 	- `name` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
   - `mibs_dir` : the directory of your custom MIBs. See [Custom MIBs](#custom-mibs)
-  - `serial_oids` : OIDs walked for the serial number before ENTITY-MIB and Printer-MIB, in this order, separated by commas (optional). The first non-empty value wins. Give the OID of the object, without its instance: `1.3.6.1.4.1.9.3.6.3`, not `1.3.6.1.4.1.9.3.6.3.0`. Invalid entries are skipped with a warning
+  - `serial_oids` : OIDs walked for the serial number before ENTITY-MIB and Printer-MIB, in this order, separated by commas (optional). The first non-empty value wins. Give the OID of the object (`1.3.6.1.4.1.9.3.6.3`) or of its instance (`1.3.6.1.4.1.9.3.6.3.0`). Invalid entries are skipped with a warning
   - `server_logging_enabled` : enable server logging or not. Not used in `offline` mode
   - `server_log_level`: server log level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
 

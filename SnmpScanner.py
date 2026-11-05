@@ -1072,16 +1072,27 @@ class SNMPScanner:
 
     async def get_serial(self, snmp_engine, community, ip):
         """
-        Get the serial number of a device, walking the serial_oids columns.
+        Get the serial number of a device, walking each serial OID, or reading
+        it when it is an instance (e.g. the .0 of a scalar).
 
         The first non-empty value wins, whatever its index: the chassis is not
         always entity 1 (e.g. 1001 on a switch stack). Falls back to
         EMPTY_SERIAL, the server rejects an empty serial.
         """
-        for mib, column in self.serial_oids.items():
+        for mib, serial_oid in self.serial_oids.items():
             snmp_results = await self.snmp_scan(
-                snmp_engine, community, ip, column, community["version"], "SNMP_WALK"
+                snmp_engine,
+                community,
+                ip,
+                serial_oid,
+                community["version"],
+                "SNMP_WALK",
             )
+            # nothing below an instance; the defaults are columns, never instances
+            if not snmp_results and serial_oid not in DEFAULT_SERIAL_OIDS.values():
+                snmp_results = await self.snmp_scan(
+                    snmp_engine, community, ip, serial_oid, community["version"]
+                )
             for oid, value in snmp_results or []:
                 serial = value.replace("\x00", "").strip()
                 if serial:
