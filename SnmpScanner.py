@@ -629,10 +629,14 @@ class SNMPScanner:
         }
         params = {"name": self.name, "expand": "*"}
         response = self.request("GET", url, headers=headers, params=params)
-        if response.status_code == 200 and response.json():
+        scanners = []
+        if response.status_code == 200:
+            # a server ignoring the name filter returns every scanner
+            scanners = [s for s in response.json() if s.get("name") == self.name]
+        if scanners:
             logging.info("Scanner instance retrieved successfully from OCS server")
-            return response.json()[0]
-        # an empty list: the scanner is not registered yet
+            return scanners[0]
+        # none with this name: the scanner is not registered yet
         elif response.status_code in (200, 404):
             logging.info(f"Scanner instance not found with name {self.name}")
             return None
