@@ -53,6 +53,8 @@ DEFAULT_SERIAL_OIDS = {
     "Printer-MIB::prtGeneralSerialNumber": "1.3.6.1.2.1.43.5.1.1.17",
 }
 NUMERIC_OID_RE = re.compile(r"\.?[0-2](\.\d+)+")
+# error-status of an SNMPv1 agent for a missing object (RFC 1157, 4.1.2)
+NO_SUCH_NAME = 2
 # IF-MIB ifPhysAddress column, walked for srcmac
 IF_PHYS_ADDRESS = "1.3.6.1.2.1.2.2.1.6"
 MAC_RE = re.compile(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}")
@@ -866,6 +868,8 @@ class SNMPScanner:
                             logging.debug(f"No SNMP response from IP {ip}")
                             return None
                         logging.error(f"SNMP error for IP {ip}: {error_indication}")
+                    elif error_status == NO_SUCH_NAME:
+                        logging.debug(f"No value for IP {ip}: {oid} - noSuchName")
                     elif error_status:
                         logging.error(
                             f"SNMP status error for IP {ip}: "
