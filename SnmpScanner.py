@@ -45,6 +45,8 @@ SCAN_BATCH_SIZE = 1000
 # the server stores this for agents without a serial number and ignores it
 # when reconciling assets
 EMPTY_SERIAL = "Empty"
+# the longest asset name the server accepts
+MAX_NAME_LENGTH = 50
 # walked in this order by get_serial, unless serial_oids is set
 DEFAULT_SERIAL_OIDS = {
     "ENTITY-MIB::entPhysicalSerialNum": "1.3.6.1.2.1.47.1.1.1.1.11",
@@ -1367,6 +1369,13 @@ class SNMPScanner:
             if not device_template["name"].strip():
                 logging.warning(f"No sysName for IP {ip}, using the IP as name")
                 device_template["name"] = ip
+
+            if len(device_template["name"]) > MAX_NAME_LENGTH:
+                device_template["name"] = device_template["name"][:MAX_NAME_LENGTH]
+                logging.warning(
+                    f"sysName of IP {ip} longer than {MAX_NAME_LENGTH} characters, "
+                    f"truncated to '{device_template['name']}'"
+                )
 
             if not device_template["uuid"]:
                 device_template["uuid"] = (
