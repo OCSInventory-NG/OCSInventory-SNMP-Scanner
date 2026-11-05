@@ -1101,21 +1101,27 @@ class SNMPScanner:
         return ""
 
     async def scan_network(self, tasks):
-        """Scan the network for SNMP devices, based on fixed OIDs."""
+        """
+        Scan the network for SNMP devices, based on fixed OIDs.
+
+        Returns the results by IP and the tasks that got an answer.
+        """
         results = {}
+        answering = []
         logging.info("Starting network scan...")
         devices_results = await self.run_bounded(tasks, self.scan_device)
         # as in a one-by-one scan, the last configuration answering wins
         for (community, ip), device_results in zip(tasks, devices_results):
             if device_results:
                 results[ip] = device_results
+                answering.append((community, ip))
 
         # an IP covered by several configurations is one device
         self.nb_scanned += len({ip for _, ip in tasks})
         # count the number of devices found
         self.nb_found += len(results)
 
-        return results
+        return results, answering
 
     async def advanced_scan_device(self, snmp_engine, community, ip, template):
         """Scan one IP with one configuration, based on its template."""
@@ -1157,8 +1163,13 @@ class SNMPScanner:
 
         return device_results
 
-    async def advanced_scan(self, batch):
-        """Perform advanced scans based on the templates."""
+    async def advanced_scan(self, answering):
+        """
+        Perform advanced scans based on the templates.
+
+        Only with the configurations that answered the base scan: a silent one
+        would time out on each field of the template.
+        """
         advanced_results = {}
         template_oids = {}
         logging.info("Starting advanced scan based on templates...")
@@ -1171,7 +1182,7 @@ class SNMPScanner:
 
         tasks = [
             (community, ip, template_oids[ip])
-            for community, ip in batch
+            for community, ip in answering
             if ip in template_oids
         ]
         devices_results = await self.run_bounded(tasks, self.advanced_scan_device)
@@ -1433,7 +1444,7 @@ class SNMPScanner:
         for number, batch in enumerate(batches, 1):
             logging.info(f"Scanning batch {number}/{len(batches)}")
             # base scan
-            scan_results = await self.scan_network(batch)
+            scan_results, answering = await self.scan_network(batch)
             self.formatted_results = self.format_to_base(scan_results)
 
             if self.mode == "ONLINE":
@@ -1441,7 +1452,7 @@ class SNMPScanner:
                 # based on their uuid
                 self.get_templates()
                 # perform advanced scans based on templates
-                self.advanced_results = await self.advanced_scan(batch)
+                self.advanced_results = await self.advanced_scan(answering)
                 # sending inventory to OCS
                 self.assets += self.send_to_ocs()
 
