@@ -19,7 +19,7 @@ The scanner supports SNMPv1, SNMPv2c and SNMPv3. The version to use is either sp
 #### Basic scan
 The basic scan is performed using a hardcoded base template corresponding to the InventoryBase model fields. The scanner purposefully uses generic OIDs to populate the fields, as the goal is to retrieve as much information as possible from the devices, regardless of their type. The basic scan is performed for all devices, regardless of whether or not a custom template is available for them.
 
-No generic OID holds a serial number on every device, so the scanner walks ENTITY-MIB `entPhysicalSerialNum` (`1.3.6.1.2.1.47.1.1.1.1.11`), then Printer-MIB `prtGeneralSerialNumber` (`1.3.6.1.2.1.43.5.1.1.17`), and keeps the first non-empty value. If neither returns one, the serial is set to `Empty`, the value the OCS server already stores for agents without a serial number. The `serial_oids` setting replaces these two OIDs. A device without a sysName is named after its IP, a sysName longer than 50 characters is truncated (the longest name the OCS server accepts).
+No generic OID holds a serial number on every device, so the scanner walks ENTITY-MIB `entPhysicalSerialNum` (`1.3.6.1.2.1.47.1.1.1.1.11`), then Printer-MIB `prtGeneralSerialNumber` (`1.3.6.1.2.1.43.5.1.1.17`), and keeps the first non-empty value. If neither returns one, the serial is set to `Empty`, the value the OCS server already stores for agents without a serial number. The OIDs of the `serial_oids` setting are walked before these two. A device without a sysName is named after its IP, a sysName longer than 50 characters is truncated (the longest name the OCS server accepts).
 
 #### Advanced scan
 If a custom template is available for a device, the scanner performs an advanced scan using the custom template. The custom template is retrieved from the OCS server and contains a list of OIDs (fields) regrouped in sections. The scanner uses the OIDs to retrieve the corresponding values from the devices and populates the fields with the values.
@@ -119,7 +119,7 @@ The `scanner.conf` file contains the following sections and fields:
 	- `log_level` : the log level to use (INFO, DEBUG, WARNING, ERROR, CRITICAL)
 	- `name` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
   - `mibs_dir` : the directory of your custom MIBs. See [Custom MIBs](#custom-mibs)
-  - `serial_oids` : the OIDs walked for the serial number, in this order, separated by commas (optional). The first non-empty value wins. Give the OID of the object, without its instance: `1.3.6.1.4.1.9.3.6.3`, not `1.3.6.1.4.1.9.3.6.3.0`. Invalid entries are skipped with a warning. When empty, ENTITY-MIB then Printer-MIB are used
+  - `serial_oids` : OIDs walked for the serial number before ENTITY-MIB and Printer-MIB, in this order, separated by commas (optional). The first non-empty value wins. Give the OID of the object, without its instance: `1.3.6.1.4.1.9.3.6.3`, not `1.3.6.1.4.1.9.3.6.3.0`. Invalid entries are skipped with a warning
   - `server_logging_enabled` : enable server logging or not. Not used in `offline` mode
   - `server_log_level`: server log level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
 

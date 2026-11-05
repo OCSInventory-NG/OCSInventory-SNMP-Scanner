@@ -47,7 +47,7 @@ SCAN_BATCH_SIZE = 1000
 EMPTY_SERIAL = "Empty"
 # the longest asset name the server accepts
 MAX_NAME_LENGTH = 50
-# walked in this order by get_serial, unless serial_oids is set
+# walked in this order by get_serial, after the serial_oids ones
 DEFAULT_SERIAL_OIDS = {
     "ENTITY-MIB::entPhysicalSerialNum": "1.3.6.1.2.1.47.1.1.1.1.11",
     "Printer-MIB::prtGeneralSerialNumber": "1.3.6.1.2.1.43.5.1.1.17",
@@ -359,7 +359,7 @@ class SNMPScanner:
         )
 
     def get_serial_oids(self):
-        """The OIDs walked by get_serial: serial_oids if set, else the defaults."""
+        """The OIDs walked by get_serial: serial_oids first, then the defaults."""
         serial_oids = {}
         for oid in self.serial_oids_setting.split(","):
             oid = oid.strip()
@@ -367,11 +367,11 @@ class SNMPScanner:
                 serial_oids[oid.lstrip(".")] = oid.lstrip(".")
             elif oid:
                 logging.warning(f"serial_oids entry '{oid}' skipped: not a numeric OID")
-        if serial_oids:
-            return serial_oids
-        if self.serial_oids_setting.strip():
-            logging.warning("No valid OID in serial_oids, using the default ones")
-        return dict(DEFAULT_SERIAL_OIDS)
+        # a default OID listed in serial_oids keeps its place there
+        for mib, oid in DEFAULT_SERIAL_OIDS.items():
+            if oid not in serial_oids:
+                serial_oids[mib] = oid
+        return serial_oids
 
     def should_try_certificate_fallback(self):
         return (
