@@ -620,12 +620,13 @@ class SNMPScanner:
 
     def get_scanner_instance(self):
         """Get the scanner instance from the server, using scanner's name."""
-        url = self.base_url + self.scanner_endpoint + f"?name={self.name}&expand=*"
+        url = self.base_url + self.scanner_endpoint
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Token {self.token}",
         }
-        response = self.request("GET", url, headers=headers)
+        params = {"name": self.name, "expand": "*"}
+        response = self.request("GET", url, headers=headers, params=params)
         if response.status_code == 200 and response.json():
             logging.info("Scanner instance retrieved successfully from OCS server")
             return response.json()[0]
@@ -1370,7 +1371,7 @@ class SNMPScanner:
 
     def get_templates(self):
         """Retrieve the available templates from the server."""
-        asset_url = self.base_url + self.asset_endpoint + "?uuid="
+        asset_url = self.base_url + self.asset_endpoint
         headers = {
             "Content-Type": "application/json",
             "Authorization": "Token " + self.token,
@@ -1378,8 +1379,8 @@ class SNMPScanner:
 
         for result in self.formatted_results:
             # check if the device exists already
-            url = asset_url + result["uuid"] + "&expand=*"
-            response = self.request("GET", url, headers=headers)
+            params = {"uuid": result["uuid"], "expand": "*"}
+            response = self.request("GET", asset_url, headers=headers, params=params)
             if response.status_code == 200 and response.json():
                 existing_asset = response.json()[0]
                 asset_id = response.json()[0]["id"]
