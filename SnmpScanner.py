@@ -855,9 +855,11 @@ class SNMPScanner:
                     )
 
                     if error_indication:
-                        logging.error(f"SNMP error for IP {ip}: {error_indication}")
+                        # an IP without an SNMP device: expected while scanning
                         if isinstance(error_indication, errind.RequestTimedOut):
+                            logging.debug(f"No SNMP response from IP {ip}")
                             return None
+                        logging.error(f"SNMP error for IP {ip}: {error_indication}")
                     elif error_status:
                         logging.error(
                             f"SNMP status error for IP {ip}: "
@@ -900,7 +902,12 @@ class SNMPScanner:
                         lexicographicMode=False,
                     ):
                         if error_indication:
-                            logging.error(f"SNMP error for IP {ip}: {error_indication}")
+                            if isinstance(error_indication, errind.RequestTimedOut):
+                                logging.debug(f"No SNMP response from IP {ip}")
+                            else:
+                                logging.error(
+                                    f"SNMP error for IP {ip}: {error_indication}"
+                                )
                             break
                         elif error_status:
                             logging.error(
