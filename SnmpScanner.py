@@ -169,7 +169,7 @@ class SNMPScanner:
         else:
             # if no name is found, create one and store it in the configuration file
             name = str(uuid.uuid4())
-            config = configparser.ConfigParser()
+            config = configparser.ConfigParser(interpolation=None)
             config.read(DIR + "/config/scanner.conf")
             config.set("scanner", "name", name)
             with open(DIR + "/config/scanner.conf", "w") as configfile:
@@ -255,7 +255,8 @@ class SNMPScanner:
 
     def read_config(self):
         """Read the configuration file using configparser."""
-        config = configparser.ConfigParser()
+        # values are literal: a password may contain a '%'
+        config = configparser.ConfigParser(interpolation=None)
         if not os.path.exists(DIR + "/config/scanner.conf"):
             logging.error("Configuration file not found, exiting...")
             exit(1)
