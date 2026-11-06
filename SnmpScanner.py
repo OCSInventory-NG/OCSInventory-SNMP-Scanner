@@ -1154,6 +1154,8 @@ class SNMPScanner:
         device_results = {}
         for section_name, section in template.items():
             logging.debug(f"Processing section {section_name} for IP {ip}...")
+            # one item per index, in the order the indexes first appear
+            items = {}
             for dic in section:
                 name = dic["name"]
                 oid = dic["retrieval_value"]
@@ -1164,24 +1166,21 @@ class SNMPScanner:
                 snmp_results = await self.snmp_scan(
                     snmp_engine, community, ip, oid, community["version"], mode
                 )
-
-                if snmp_results:
-                    index = 0
-                    for oid, value in snmp_results:
-                        if section_name in device_results:
-                            # use index of the value in snmp_results
-                            # to keep track of the order
-                            if index < len(device_results[section_name]):
-                                device_results[section_name][index][name] = value
-                                index += 1
-                            else:
-                                device_results[section_name].append({name: value})
-                                index += 1
-                        else:
-                            device_results[section_name] = [{name: value}]
-                            index += 1
-                else:
+                if not snmp_results:
                     logging.debug(f"No SNMP response received for IP {ip}, OID {oid}")
+                    continue
+
+                column = oid.lstrip(".") + "."
+                for value_oid, value in snmp_results:
+                    # a walked value belongs to the item of its index, the end
+                    # of its OID: a column may lack some indexes
+                    index = ""
+                    if mode == "SNMP_WALK":
+                        index = value_oid.removeprefix(column)
+                    items.setdefault(index, {})[name] = value
+
+            if items:
+                device_results[section_name] = list(items.values())
 
         return device_results
 

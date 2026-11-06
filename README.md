@@ -244,7 +244,7 @@ In the example above, the INFORMATION section is set to use the SNMP_GET method,
 
 #### SNMP_WALK mode
 Starting from a given OID, walk the SNMP tree and retrieve a list of data
-> For this mode to work, we expect the OIDs used in a same section to belong to the same SNMP node and have the same indexes. In practice, this means that the indexes from the first OID being walked will be used for the rest of the fields. 
+> For this mode to work, the OIDs of a same section must be columns of the same SNMP table. Values are matched by their index, the end of their OID after the field's OID: each index gives one item, and a field without a value for an index is left out of that item. 
 
 #### SNMP_GET mode
 Get the value corresponding to the given OID
