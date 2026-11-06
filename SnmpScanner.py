@@ -4,32 +4,66 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import socket
 import ssl
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 import urllib3
+from pysmi.codegen.pysnmp import baseMibs
+from pysmi.reader.localfile import FileReader
+from pysmi.reader.url import getReadersFromUrls
+from pysmi.searcher.pyfile import PyFileSearcher
 from pysnmp.hlapi.asyncio import (
     CommunityData,
     ContextData,
+    EndOfMibView,
+    NoSuchInstance,
+    NoSuchObject,
     ObjectIdentity,
     ObjectType,
     SnmpEngine,
     UdpTransportTarget,
+    UsmUserData,
     get_cmd,
-    next_cmd,
     usmAesCfb128Protocol,
     usmDESPrivProtocol,
     usmHMACMD5AuthProtocol,
     usmHMACSHAAuthProtocol,
+    walk_cmd,
 )
-from pysnmp.smi import builder, compiler, view
+from pysnmp.proto import errind
+from pysnmp.smi import compiler, view
 from requests.adapters import HTTPAdapter
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 VERSION = "3.0.0"
+DEFAULT_MAX_CONCURRENT_DEVICES = 50
+SCAN_BATCH_SIZE = 1000
+# the server stores this for agents without a serial number and ignores it
+# when reconciling assets
+EMPTY_SERIAL = "Empty"
+# the longest asset name the server accepts
+MAX_NAME_LENGTH = 50
+# walked in this order by get_serial, after the serial_oids ones
+DEFAULT_SERIAL_OIDS = {
+    "ENTITY-MIB::entPhysicalSerialNum": "1.3.6.1.2.1.47.1.1.1.1.11",
+    "Printer-MIB::prtGeneralSerialNumber": "1.3.6.1.2.1.43.5.1.1.17",
+}
+NUMERIC_OID_RE = re.compile(r"\.?[0-2](\.\d+)+")
+# error-status of an SNMPv1 agent for a missing object (RFC 1157, 4.1.2)
+NO_SUCH_NAME = 2
+# IF-MIB ifPhysAddress column, walked for srcmac
+IF_PHYS_ADDRESS = "1.3.6.1.2.1.2.2.1.6"
+MAC_RE = re.compile(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}")
+# the SNMPv3 protocols the server can configure
+AUTH_PROTOCOLS = {"MD5": usmHMACMD5AuthProtocol, "SHA": usmHMACSHAAuthProtocol}
+PRIV_PROTOCOLS = {"DES": usmDESPrivProtocol, "AES": usmAesCfb128Protocol}
+MIB_MODULE_RE = re.compile(
+    rb"^\s*([A-Za-z][\w-]*)\s+DEFINITIONS\b[^:]*::=\s*BEGIN", re.M
+)
 
 
 class SystemStoreAdapter(HTTPAdapter):
@@ -49,6 +83,17 @@ class SystemStoreAdapter(HTTPAdapter):
             context.load_verify_locations(cafile=self.cafile)
         kwargs["ssl_context"] = context
         return super().init_poolmanager(*args, **kwargs)
+
+
+class MibDirReader(FileReader):
+    """Find the MIBs of mibs_dir by module name, whatever their file name."""
+
+    def __init__(self, mibs_dir, files):
+        super().__init__(mibs_dir, recursive=False)
+        self.files = files
+
+    def get_mib_variants(self, mibname, **options):
+        return [(mibname, self.files[mibname])] if mibname in self.files else []
 
 
 class SNMPScanner:
@@ -84,6 +129,7 @@ class SNMPScanner:
         logging.info(f"Starting SNMP scanner v{VERSION}...")
         self.certificate_logged = False
         self.log_certificate_mode()
+        self.log_scan_concurrency()
         self.session = self.create_session()
         # endpoints
         self.auth_endpoint = "/api-auth/token"
@@ -96,16 +142,16 @@ class SNMPScanner:
         self.oids = {
             "description": "1.3.6.1.2.1.1.1.0",
             "name": "1.3.6.1.2.1.1.5.0",
-            "srcmac": "1.3.6.1.2.1.2.2.1.6.1",
-            "serial": "1.3.6.1.2.1.47.1.1.1.1.11.1",
         }
+        self.serial_oids = self.get_serial_oids()
         self.nb_found = 0
         self.nb_scanned = 0
         self.ip = self.get_scanner_ip()
         self.name = self.get_or_create_name()
-        self.mib_builder = builder.MibBuilder()
+        # the builder of an engine, so that standard MIBs resolve as in the engines
+        self.mib_builder = SnmpEngine().get_mib_builder()
         compiler.add_mib_compiler(self.mib_builder, sources=[self.mibs_dir])
-        self.load_mib_dir(self.mibs_dir)
+        self.load_mibs(self.mibs_dir)
         self.mib_view_controller = view.MibViewController(self.mib_builder)
         self.assets = []
         self.log_levels = {
@@ -123,32 +169,84 @@ class SNMPScanner:
         else:
             # if no name is found, create one and store it in the configuration file
             name = str(uuid.uuid4())
-            config = configparser.ConfigParser()
+            config = configparser.ConfigParser(interpolation=None)
             config.read(DIR + "/config/scanner.conf")
             config.set("scanner", "name", name)
             with open(DIR + "/config/scanner.conf", "w") as configfile:
                 config.write(configfile)
             return name
 
-    def load_mib_dir(self, mib_path):
-        """Load all MIB files in a directory."""
-        for root, dirs, files in os.walk(mib_path):
-            for file in files:
-                logging.debug(f"Loading MIB file: {file}")
-                mib_file = os.path.join(root, file)
-                self.load_mib_file(mib_file)
+    def load_mibs(self, mibs_dir):
+        """
+        Compile and load the MIBs of mibs_dir, return the modules loaded.
 
-            for dire in dirs:
-                logging.debug(f"Loading MIB directory: {dire}")
-                self.load_mib_dir(os.path.join(root, dire))
+        Imports are looked up in mibs_dir, then in the system MIB directories.
+        A MIB is compiled again only when its file changes.
+        """
+        files = {}
+        for root, _, names in os.walk(mibs_dir):
+            for name in names:
+                path = os.path.join(root, name)
+                try:
+                    with open(path, "rb") as f:
+                        modules = MIB_MODULE_RE.findall(f.read())
+                except OSError as e:
+                    logging.error(f"Cannot read MIB file {path}: {e}")
+                    continue
+                for module in map(bytes.decode, modules):
+                    if module in files:
+                        logging.warning(
+                            f"MIB {module} defined in {files[module]} and {path}, "
+                            f"using {path}"
+                        )
+                    files[module] = path
+        if not files:
+            logging.info(f"No MIB found in {mibs_dir}")
+            return []
 
-    def load_mib_file(self, mib_file):
-        """Load a MIB file."""
-        mib_name = os.path.splitext(os.path.basename(mib_file))[0]
-        try:
-            self.mib_builder.loadModules(mib_name)
-        except Exception as e:
-            logging.error(f"Error loading MIB {mib_name} from file {mib_file}: {e}")
+        mib_compiler = self.mib_builder.get_mib_compiler()
+        mib_compiler.add_sources(
+            MibDirReader(mibs_dir, files),
+            *getReadersFromUrls(*compiler.DEFAULT_SOURCES),
+        )
+        mib_compiler.add_searchers(PyFileSearcher(compiler.DEFAULT_DEST))
+        # without ignoreErrors, one broken MIB stops the others from compiling
+        statuses = mib_compiler.compile(*files, ignoreErrors=True)
+        missing = [name for name, status in statuses.items() if status == "missing"]
+        if missing:
+            logging.error(
+                f"MIBs imported but found neither in {mibs_dir} nor in the system "
+                f"MIB directories: {', '.join(missing)}"
+            )
+
+        ok = ("compiled", "untouched", "borrowed")
+        failed = [name for name, status in statuses.items() if status not in ok]
+        loaded = []
+        for module, path in files.items():
+            status = statuses.get(module)
+            # SMI definitions, built into pysnmp and pysmi
+            if module in baseMibs:
+                continue
+            if status not in ok:
+                error = getattr(status, "error", status)
+                logging.error(f"MIB {module} of {path} not compiled: {error}")
+                continue
+            try:
+                self.mib_builder.load_modules(module)
+            except Exception as e:
+                # pysmi writes a MIB even when one of its imports fails
+                imports = [name for name in failed if name in str(e)]
+                if imports:
+                    reason = f"imports {', '.join(imports)}, not compiled"
+                else:
+                    reason = str(e).rsplit(" caused by ", 1)[-1]
+                logging.error(f"MIB {module} of {path} not loaded: {reason}")
+                continue
+            loaded.append(module)
+        logging.info(
+            f"{len(loaded)} MIB modules loaded from {mibs_dir}: {', '.join(loaded)}"
+        )
+        return loaded
 
     def get_scanner_ip(self):
         """Get the local IP of the scanner."""
@@ -157,10 +255,11 @@ class SNMPScanner:
 
     def read_config(self):
         """Read the configuration file using configparser."""
-        config = configparser.ConfigParser()
+        # values are literal: a password may contain a '%'
+        config = configparser.ConfigParser(interpolation=None)
         if not os.path.exists(DIR + "/config/scanner.conf"):
             logging.error("Configuration file not found, exiting...")
-            exit()
+            exit(1)
         else:
             config.read(DIR + "/config/scanner.conf")
             self.auth_data = {
@@ -176,8 +275,22 @@ class SNMPScanner:
             self.inventoy_dir = DIR + "/" + config.get("scanner", "local_inventory_dir")
             self.log_level = config.get("scanner", "log_level")
             self.targets = config.get("scanner", "targeted_subnets").split(",")
+            # logging is not set up yet: log_scan_concurrency reports it
+            self.max_concurrent_devices = DEFAULT_MAX_CONCURRENT_DEVICES
+            self.invalid_max_concurrent_devices = None
+            value = config.get("scanner", "max_concurrent_devices", fallback=None)
+            if value is not None:
+                try:
+                    max_concurrent_devices = int(value)
+                except ValueError:
+                    max_concurrent_devices = 0
+                if max_concurrent_devices >= 1:
+                    self.max_concurrent_devices = max_concurrent_devices
+                else:
+                    self.invalid_max_concurrent_devices = value
             self.name = config.get("scanner", "name")
             self.mibs_dir = config.get("scanner", "mibs_dir")
+            self.serial_oids_setting = config.get("scanner", "serial_oids", fallback="")
             self.server_logging_enabled = config.getboolean(
                 "scanner", "server_logging_enabled", fallback=False
             )
@@ -235,6 +348,33 @@ class SNMPScanner:
             "Certificate mode: TLS enabled (system store), no fallback "
             "certificate path available."
         )
+
+    def log_scan_concurrency(self):
+        """Log the scan concurrency, once at startup."""
+        if self.invalid_max_concurrent_devices is not None:
+            logging.warning(
+                "Invalid max_concurrent_devices value "
+                f"'{self.invalid_max_concurrent_devices}', expected an integer "
+                f">= 1: using the default ({DEFAULT_MAX_CONCURRENT_DEVICES})"
+            )
+        logging.info(
+            f"Scan concurrency: up to {self.max_concurrent_devices} devices at a time"
+        )
+
+    def get_serial_oids(self):
+        """The OIDs walked by get_serial: serial_oids first, then the defaults."""
+        serial_oids = {}
+        for oid in self.serial_oids_setting.split(","):
+            oid = oid.strip()
+            if NUMERIC_OID_RE.fullmatch(oid):
+                serial_oids[oid.lstrip(".")] = oid.lstrip(".")
+            elif oid:
+                logging.warning(f"serial_oids entry '{oid}' skipped: not a numeric OID")
+        # a default OID listed in serial_oids keeps its place there
+        for mib, oid in DEFAULT_SERIAL_OIDS.items():
+            if oid not in serial_oids:
+                serial_oids[mib] = oid
+        return serial_oids
 
     def should_try_certificate_fallback(self):
         return (
@@ -390,14 +530,14 @@ class SNMPScanner:
             # check if snmp is enabled
             if response.json()["value"][0]["value"] != 1:
                 logging.error("SNMP is not enabled on the server, exiting...")
-                exit()
+                exit(1)
             else:
                 logging.info("SNMP is enabled on the server")
         else:
             logging.error(
                 f"Failed to retrieve SNMP enabled status: {response.status_code}"
             )
-            exit()
+            exit(1)
 
         processed_configs = []
         # get scanner details
@@ -426,7 +566,7 @@ class SNMPScanner:
             logging.error(
                 "No subnets defined in local configuration or on the server, exiting..."
             )
-            exit()
+            exit(1)
 
         # getting configs from the server
         # if we did get the scanner instance, we already have configs
@@ -440,24 +580,34 @@ class SNMPScanner:
             # we are not updating last scan date if no scan is performed
             self.scan_date = None
             self.update_or_create_scanner()
-            exit()
+            exit(1)
 
+        scanner_subnets = self.parse_subnet_list(
+            scanner["subnets"], f"scanner {self.name}"
+        )
         for config in configurations:
-            scanner_subnets = set(scanner.get("subnets"))
-            config_subnets = set(config["subnets"])
-            # check if the configuration's subnets match the scanner's subnets
-            matching_subnets = scanner_subnets.intersection(config_subnets)
+            config_subnets = self.parse_subnet_list(
+                config["subnets"], f"SNMP configuration {config.get('id')}"
+            )
+            # scan the addresses in both subnets: two overlapping CIDR blocks
+            # are nested, so their intersection is the smaller one
+            matching_subnets = [
+                max(config_subnet, scanner_subnet, key=lambda n: n.prefixlen)
+                for config_subnet in config_subnets
+                for scanner_subnet in scanner_subnets
+                if config_subnet.overlaps(scanner_subnet)
+            ]
             if matching_subnets:
                 config["subnets"] = matching_subnets
                 processed_configs.append(config)
 
-            self.generate_ips_for_configs(processed_configs)
+        self.generate_ips_for_configs(processed_configs)
 
         if not processed_configs:
             logging.error(
                 "No SNMP configuration matching the scanner's subnets, exiting..."
             )
-            exit()
+            exit(1)
 
         return processed_configs
 
@@ -465,22 +615,32 @@ class SNMPScanner:
         """Generate the list of IPs for each configuration."""
         for config in parsed_configs:
             config["ips"] = []
-            for subnet in config["subnets"]:
-                network = ipaddress.ip_network(subnet)
+            subnets = self.parse_subnet_list(
+                config["subnets"], f"SNMP configuration {config.get('id')}"
+            )
+            for network in subnets:
                 config["ips"] += [str(ip) for ip in network.hosts()]
+            # the subnets of a configuration may overlap
+            config["ips"] = list(dict.fromkeys(config["ips"]))
 
     def get_scanner_instance(self):
         """Get the scanner instance from the server, using scanner's name."""
-        url = self.base_url + self.scanner_endpoint + f"?name={self.name}&expand=*"
+        url = self.base_url + self.scanner_endpoint
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Token {self.token}",
         }
-        response = self.request("GET", url, headers=headers)
-        if response.status_code == 200 and response.json():
+        params = {"name": self.name, "expand": "*"}
+        response = self.request("GET", url, headers=headers, params=params)
+        scanners = []
+        if response.status_code == 200:
+            # a server ignoring the name filter returns every scanner
+            scanners = [s for s in response.json() if s.get("name") == self.name]
+        if scanners:
             logging.info("Scanner instance retrieved successfully from OCS server")
-            return response.json()[0]
-        elif response.status_code == 404:
+            return scanners[0]
+        # none with this name: the scanner is not registered yet
+        elif response.status_code in (200, 404):
             logging.info(f"Scanner instance not found with name {self.name}")
             return None
         else:
@@ -570,21 +730,114 @@ class SNMPScanner:
                         logging.info("Local SNMP configuration parsed successfully")
                 except Exception as e:
                     logging.error(f"Failed to parse local configuration: {e}")
-                    exit()
+                    exit(1)
             else:
                 logging.error("Local SNMP configuration not found, exiting...")
-                exit()
+                exit(1)
 
-    def parse_subnet_list(self, subnet_str_list):
+    def parse_subnet_list(self, subnet_str_list, owner):
         """Parse a list of subnet strings into a list of IPNetwork objects."""
         subnets = []
         for subnet in subnet_str_list:
-            network = ipaddress.ip_network(subnet)
+            try:
+                network = ipaddress.ip_network(str(subnet).strip())
+            except ValueError as e:
+                logging.warning(f"Subnet of {owner} skipped: {e}")
+                continue
             subnets.append(network)
         return subnets
 
-    async def snmp_scan(self, community, ip, oid, version, mode="SNMP_GET"):
-        """Scan the network for SNMP devices."""
+    def format_snmp_value(self, oid, value):
+        """Convert an SNMP value to the string sent to OCS, None if there is none."""
+        # exceptions of RFC 3416, sent instead of a value
+        if isinstance(value, (NoSuchObject, NoSuchInstance, EndOfMibView)):
+            return None
+        data_type = value.__class__.__name__
+        if data_type == "OctetString":
+            octets = value.asOctets()
+            printable = octets.isascii() and octets.decode().isprintable()
+            # a MAC address comes as 6 raw bytes, 6 printable characters stay text
+            # outside ifPhysAddress
+            in_phys_address = str(oid).startswith(IF_PHYS_ADDRESS + ".")
+            if len(octets) == 6 and (not printable or in_phys_address):
+                return ":".join(f"{b:02x}" for b in octets)
+            try:
+                return octets.decode("utf-8")
+            except UnicodeDecodeError:
+                return value.prettyPrint()
+        elif data_type == "TimeTicks":
+            ticks = int(value)
+            days, remain = divmod(ticks / 100, 86400)
+            hours, remain = divmod(remain, 3600)
+            minutes, seconds = divmod(remain, 60)
+            return f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
+        else:
+            return value.prettyPrint()
+
+    def set_auth_data(self):
+        """Build the authentication data of each configuration, skip invalid ones."""
+        configs = []
+        for community in self.configs:
+            try:
+                community["auth_data"] = self.get_auth_data(community)
+            except ValueError as e:
+                # the name of a v1/v2c configuration is its community
+                logging.error(f"SNMP configuration {community.get('id')} skipped: {e}")
+                continue
+            configs.append(community)
+        self.configs = configs
+
+    def get_auth_data(self, community):
+        """Return the pysnmp authentication data, ValueError if it is invalid."""
+        version = community["version"]
+        if version == "1":
+            return CommunityData(community["name"], mpModel=0)
+        if version == "2c":
+            return CommunityData(community["name"], mpModel=1)
+        if version != "3":
+            raise ValueError(f"unknown SNMP version '{version}'")
+
+        user = community.get("user")
+        level = community.get("auth_level")
+        if not user:
+            raise ValueError("no SNMPv3 user")
+        if level == "noAuthNoPriv":
+            return UsmUserData(user)
+        if level not in ("authNoPriv", "authPriv"):
+            raise ValueError(f"unknown SNMPv3 security level '{level}'")
+
+        auth_protocol = AUTH_PROTOCOLS.get(community.get("auth_protocol"))
+        password = community.get("password") or ""
+        if not auth_protocol:
+            raise ValueError(
+                f"unknown authentication protocol '{community.get('auth_protocol')}'"
+            )
+        # RFC 3414, section 11.2
+        if len(password) < 8:
+            raise ValueError("authentication password shorter than 8 characters")
+        if level == "authNoPriv":
+            return UsmUserData(user, authKey=password, authProtocol=auth_protocol)
+
+        priv_protocol = PRIV_PROTOCOLS.get(community.get("priv_protocol"))
+        priv_password = community.get("priv_password") or ""
+        if not priv_protocol:
+            raise ValueError(
+                f"unknown privacy protocol '{community.get('priv_protocol')}'"
+            )
+        if len(priv_password) < 8:
+            raise ValueError("privacy password shorter than 8 characters")
+        return UsmUserData(
+            user,
+            authKey=password,
+            authProtocol=auth_protocol,
+            privKey=priv_password,
+            privProtocol=priv_protocol,
+        )
+
+    async def snmp_scan(
+        self, snmp_engine, community, ip, oid, version, mode="SNMP_GET"
+    ):
+        """Query an OID: a list of (oid, value), None on a timeout or a failure."""
         try:
             transport = await UdpTransportTarget.create(
                 (ip, 161), community["timeout"], community["retries"]
@@ -595,48 +848,14 @@ class SNMPScanner:
                 f"Version: {version}, Mode: {mode}"
             )
 
-            if version == "1":
-                community_data = CommunityData(community["name"], mpModel=0)
-            elif version == "2c":
-                community_data = CommunityData(community["name"], mpModel=1)
-            elif version == "3":
-                # validate SNMP v3 user parameters
-                user = community.get("user", "")
-                password = community.get("password", "")
-                priv_password = community.get("priv_password", "")
-
-                auth_protocol = (
-                    usmHMACMD5AuthProtocol
-                    if community["auth_protocol"] == "MD5"
-                    else usmHMACSHAAuthProtocol
-                )
-                priv_protocol = (
-                    usmDESPrivProtocol
-                    if community["priv_protocol"] == "DES"
-                    else usmAesCfb128Protocol
-                )
-
-                if community["auth_level"] == "authNoPriv":
-                    community_data = CommunityData(
-                        user, authKey=password, authProtocol=auth_protocol
-                    )
-                elif community["auth_level"] == "authPriv":
-                    community_data = CommunityData(
-                        user,
-                        authKey=password,
-                        authProtocol=auth_protocol,
-                        privKey=priv_password,
-                        privProtocol=priv_protocol,
-                    )
-                else:
-                    community_data = CommunityData(user)
+            community_data = community["auth_data"]
 
             results = []
             try:
                 if mode == "SNMP_GET":
                     error_indication, error_status, error_index, var_binds = (
                         await get_cmd(
-                            SnmpEngine(),
+                            snmp_engine,
                             community_data,
                             transport,
                             ContextData(),
@@ -645,47 +864,33 @@ class SNMPScanner:
                     )
 
                     if error_indication:
-                        logging.error(f"SNMP error: {error_indication}")
+                        # an IP without an SNMP device: expected while scanning
+                        if isinstance(error_indication, errind.RequestTimedOut):
+                            logging.debug(f"No SNMP response from IP {ip}")
+                            return None
+                        logging.error(f"SNMP error for IP {ip}: {error_indication}")
+                    elif error_status == NO_SUCH_NAME:
+                        logging.debug(f"No value for IP {ip}: {oid} - noSuchName")
                     elif error_status:
                         logging.error(
-                            f"SNMP status error: {error_status.prettyPrint()}"
+                            f"SNMP status error for IP {ip}: "
+                            f"{error_status.prettyPrint()}"
                         )
                     else:
                         for var_bind in var_binds:
                             try:
-                                data_type = var_bind[1].__class__.__name__
                                 oid_str = str(var_bind[0])
-                                value_str = None
-                                if data_type == "OctetString":
-                                    # mac address ?
-                                    if len(var_bind[1].asOctets()) == 6:
-                                        value_str = ":".join(
-                                            f"{b:02x}" for b in var_bind[1].asOctets()
-                                        )
-                                    else:
-                                        try:
-                                            value_str = (
-                                                var_bind[1].asOctets().decode("utf-8")
-                                            )
-                                        except UnicodeDecodeError:
-                                            value_str = var_bind[1].prettyPrint()
-                                # timeticks data type
-                                elif data_type == "TimeTicks":
-                                    ticks = int(var_bind[1])
-                                    days, remain = divmod(ticks / 100, 86400)
-                                    hours, remain = divmod(remain, 3600)
-                                    minutes, seconds = divmod(remain, 60)
-                                    value_str = (
-                                        f"{int(days)}d {int(hours)}h "
-                                        f"{int(minutes)}m {int(seconds)}s"
+                                value_str = self.format_snmp_value(oid_str, var_bind[1])
+                                if value_str is None:
+                                    logging.debug(
+                                        f"No value for IP {ip}: {oid_str} - "
+                                        f"{var_bind[1].prettyPrint()}"
                                     )
-                                else:
-                                    value_str = var_bind[1].prettyPrint()
-
+                                    continue
                                 results.append((oid_str, value_str))
                                 logging.debug(
-                                    f"Successfully processed OID: {oid_str} "
-                                    f"- Value: {value_str}"
+                                    f"Successfully processed OID for IP {ip}: "
+                                    f"{oid_str} - Value: {value_str}"
                                 )
 
                             except Exception as e:
@@ -694,69 +899,50 @@ class SNMPScanner:
                                 )
                                 continue
                 else:  # SNMP_WALK
-
-                    next = next_cmd(
-                        SnmpEngine(),
+                    async for (
+                        error_indication,
+                        error_status,
+                        error_index,
+                        var_binds,
+                    ) in walk_cmd(
+                        snmp_engine,
                         community_data,
                         transport,
                         ContextData(),
                         ObjectType(ObjectIdentity(oid)),
                         lexicographicMode=False,
-                    )
-
-                    for (
-                        error_indication,
-                        error_status,
-                        error_index,
-                        var_binds,
-                    ) in await next:
+                    ):
                         if error_indication:
-                            logging.error(f"SNMP error: {error_indication}")
+                            if isinstance(error_indication, errind.RequestTimedOut):
+                                logging.debug(f"No SNMP response from IP {ip}")
+                            else:
+                                logging.error(
+                                    f"SNMP error for IP {ip}: {error_indication}"
+                                )
                             break
                         elif error_status:
                             logging.error(
-                                f"SNMP status error: {error_status.prettyPrint()}"
+                                f"SNMP status error for IP {ip}: "
+                                f"{error_status.prettyPrint()}"
                             )
                             break
                         else:
                             for var_bind in var_binds:
                                 try:
-                                    data_type = var_bind[1].__class__.__name__
                                     oid_str = str(var_bind[0])
-                                    value_str = None
-                                    if data_type == "OctetString":
-                                        # mac address ?
-                                        if len(var_bind[1].asOctets()) == 6:
-                                            value_str = ":".join(
-                                                f"{b:02x}"
-                                                for b in var_bind[1].asOctets()
-                                            )
-                                        else:
-                                            try:
-                                                value_str = (
-                                                    var_bind[1]
-                                                    .asOctets()
-                                                    .decode("utf-8")
-                                                )
-                                            except UnicodeDecodeError:
-                                                value_str = var_bind[1].prettyPrint()
-                                    # timeticks data type
-                                    elif data_type == "TimeTicks":
-                                        ticks = int(var_bind[1])
-                                        days, remain = divmod(ticks / 100, 86400)
-                                        hours, remain = divmod(remain, 3600)
-                                        minutes, seconds = divmod(remain, 60)
-                                        value_str = (
-                                            f"{int(days)}d {int(hours)}h "
-                                            f"{int(minutes)}m {int(seconds)}s"
+                                    value_str = self.format_snmp_value(
+                                        oid_str, var_bind[1]
+                                    )
+                                    if value_str is None:
+                                        logging.debug(
+                                            f"No value for IP {ip}: {oid_str} - "
+                                            f"{var_bind[1].prettyPrint()}"
                                         )
-                                    else:
-                                        value_str = var_bind[1].prettyPrint()
-
+                                        continue
                                     results.append((oid_str, value_str))
                                     logging.debug(
-                                        f"Successfully processed OID: {oid_str} "
-                                        f"- Value: {value_str}"
+                                        f"Successfully processed OID for IP {ip}: "
+                                        f"{oid_str} - Value: {value_str}"
                                     )
 
                                 except Exception as e:
@@ -784,41 +970,227 @@ class SNMPScanner:
             logging.error(f"Critical error in SNMP scan for IP {ip}: {str(e)}")
             return None
 
-    async def scan_network(self):
-        """Scan the network for SNMP devices, based on fixed OIDs."""
-        results = {}
-        logging.info("Starting network scan...")
-        mode = "SNMP_GET"
+    def create_snmp_engine(self):
+        """Create an SNMP engine for the scan, to close with close_dispatcher()."""
+        snmp_engine = SnmpEngine()
+        # values resolved with the MIBs loaded at startup, shared by all engines:
+        # loading them in each engine takes seconds with hundreds of MIBs
+        snmp_engine.cache["mibViewController"] = self.mib_view_controller
+        return snmp_engine
+
+    def scan_tasks(self):
+        """List the (configuration, IP) pairs to scan, grouped by IP."""
+        # each IP keeps the order of the configurations: the last answering wins
+        configs_by_ip = {}
         for community in self.configs:
             for ip in community["ips"]:
-                logging.debug(
-                    f"======== Scanning {ip} with community "
-                    f"'{community['name']}' and version "
-                    f"'{community['version']}' ========"
-                )
-                self.nb_scanned += 1
-                device_results = {}
-                for name, oid in self.oids.items():
-                    logging.debug(f"Scanning '{name}' - OID {oid} with mode {mode}")
-                    snmp_results = await self.snmp_scan(
-                        community, ip, oid, community["version"], mode
-                    )
+                configs_by_ip.setdefault(ip, []).append(community)
+        return [
+            (community, ip)
+            for ip, communities in configs_by_ip.items()
+            for community in communities
+        ]
 
-                    if snmp_results:
-                        for oid, value in snmp_results:
-                            device_results[name] = value
-                        results[ip] = device_results
+    def batch_tasks(self, tasks):
+        """Split tasks grouped by IP in batches of SCAN_BATCH_SIZE, keeping each IP."""
+        batch = []
+        for task in tasks:
+            if len(batch) >= SCAN_BATCH_SIZE and task[1] != batch[-1][1]:
+                yield batch
+                batch = []
+            batch.append(task)
+        if batch:
+            yield batch
 
-                    else:
-                        logging.debug("No SNMP response received")
-
-        # count the number of devices found
-        self.nb_found = len(results)
-
+    async def run_bounded(self, tasks, worker_fn):
+        """Run worker_fn on each task concurrently; results keep the task order."""
+        results = []
+        for batch in self.batch_tasks(tasks):
+            # one engine per batch: costly to create, slower with each IP queried;
+            # and per configuration: an engine holds a single v3 user per name
+            snmp_engines = {}
+            try:
+                for community, *_ in batch:
+                    if id(community) not in snmp_engines:
+                        snmp_engines[id(community)] = self.create_snmp_engine()
+                results += await self.run_batch(snmp_engines, batch, worker_fn)
+            finally:
+                for snmp_engine in snmp_engines.values():
+                    snmp_engine.close_dispatcher()
         return results
 
-    async def advanced_scan(self):
-        """Perform advanced scans based on the templates."""
+    async def run_batch(self, snmp_engines, tasks, worker_fn):
+        results = [None] * len(tasks)
+        # shared iterator: each task goes to a single worker
+        pending = enumerate(tasks)
+
+        async def worker():
+            for index, task in pending:
+                snmp_engine = snmp_engines[id(task[0])]
+                results[index] = await worker_fn(snmp_engine, *task)
+
+        nb_workers = min(self.max_concurrent_devices, len(tasks))
+        workers = [asyncio.create_task(worker()) for _ in range(nb_workers)]
+        try:
+            await asyncio.gather(*workers)
+        finally:
+            # gather leaves the other workers running when one fails
+            for task in workers:
+                task.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+        return results
+
+    async def scan_device(self, snmp_engine, community, ip):
+        """Scan one IP with one configuration, based on fixed OIDs."""
+        logging.debug(
+            f"======== Scanning {ip} with SNMP configuration "
+            f"{community.get('id')} (version {community['version']}) ========"
+        )
+        mode = "SNMP_GET"
+        device_results = {}
+        for name, oid in self.oids.items():
+            logging.debug(f"Scanning '{name}' for IP {ip} - OID {oid} with mode {mode}")
+            snmp_results = await self.snmp_scan(
+                snmp_engine, community, ip, oid, community["version"], mode
+            )
+            # a silent device: the next OIDs would time out as well
+            if snmp_results is None and not device_results:
+                break
+
+            if snmp_results:
+                for oid, value in snmp_results:
+                    device_results[name] = value
+
+            else:
+                logging.debug(f"No SNMP response received for IP {ip}, OID {oid}")
+
+        # only devices that answered, a silent IP would time out again
+        if device_results:
+            device_results["serial"] = await self.get_serial(snmp_engine, community, ip)
+            device_results["srcmac"] = await self.get_mac(snmp_engine, community, ip)
+
+        return device_results
+
+    async def get_serial(self, snmp_engine, community, ip):
+        """
+        Get the serial number of a device, walking each serial OID, or reading
+        it when it is an instance (e.g. the .0 of a scalar).
+
+        The first non-empty value wins, whatever its index: the chassis is not
+        always entity 1 (e.g. 1001 on a switch stack). Falls back to
+        EMPTY_SERIAL, the server rejects an empty serial.
+        """
+        for mib, serial_oid in self.serial_oids.items():
+            snmp_results = await self.snmp_scan(
+                snmp_engine,
+                community,
+                ip,
+                serial_oid,
+                community["version"],
+                "SNMP_WALK",
+            )
+            # nothing below an instance; the defaults are columns, never instances
+            if not snmp_results and serial_oid not in DEFAULT_SERIAL_OIDS.values():
+                snmp_results = await self.snmp_scan(
+                    snmp_engine, community, ip, serial_oid, community["version"]
+                )
+            for oid, value in snmp_results or []:
+                serial = value.replace("\x00", "").strip()
+                if serial:
+                    logging.debug(f"Serial number of IP {ip} found in {mib}: {oid}")
+                    return serial
+
+        logging.warning(
+            f"No serial number found for IP {ip} in "
+            f"{', '.join(self.serial_oids)}, using '{EMPTY_SERIAL}'"
+        )
+        return EMPTY_SERIAL
+
+    async def get_mac(self, snmp_engine, community, ip):
+        """The MAC address of the first interface that has one, empty if none."""
+        snmp_results = await self.snmp_scan(
+            snmp_engine,
+            community,
+            ip,
+            IF_PHYS_ADDRESS,
+            community["version"],
+            "SNMP_WALK",
+        )
+        for oid, value in snmp_results or []:
+            # loopbacks and tunnels have an empty or zero address
+            if MAC_RE.fullmatch(value) and value != "00:00:00:00:00:00":
+                return value
+        return ""
+
+    async def scan_network(self, tasks):
+        """
+        Scan the network for SNMP devices, based on fixed OIDs.
+
+        Returns the results by IP and the tasks that got an answer.
+        """
+        results = {}
+        answering = []
+        logging.info("Starting network scan...")
+        devices_results = await self.run_bounded(tasks, self.scan_device)
+        # as in a one-by-one scan, the last configuration answering wins
+        for (community, ip), device_results in zip(tasks, devices_results):
+            if device_results:
+                results[ip] = device_results
+                answering.append((community, ip))
+
+        # an IP covered by several configurations is one device
+        self.nb_scanned += len({ip for _, ip in tasks})
+        # count the number of devices found
+        self.nb_found += len(results)
+
+        return results, answering
+
+    async def advanced_scan_device(self, snmp_engine, community, ip, template):
+        """Scan one IP with one configuration, based on its template."""
+        logging.debug(
+            f"======== Advance scanning {ip} with SNMP configuration "
+            f"{community.get('id')} (version {community['version']}) ========"
+        )
+        device_results = {}
+        for section_name, section in template.items():
+            logging.debug(f"Processing section {section_name} for IP {ip}...")
+            # one item per index, in the order the indexes first appear
+            items = {}
+            for dic in section:
+                name = dic["name"]
+                oid = dic["retrieval_value"]
+                mode = dic["retrieval_method"]
+                logging.debug(
+                    f"Scanning '{name}' for IP {ip} - OID {oid} with mode {mode}"
+                )
+                snmp_results = await self.snmp_scan(
+                    snmp_engine, community, ip, oid, community["version"], mode
+                )
+                if not snmp_results:
+                    logging.debug(f"No SNMP response received for IP {ip}, OID {oid}")
+                    continue
+
+                column = oid.lstrip(".") + "."
+                for value_oid, value in snmp_results:
+                    # a walked value belongs to the item of its index, the end
+                    # of its OID: a column may lack some indexes
+                    index = ""
+                    if mode == "SNMP_WALK":
+                        index = value_oid.removeprefix(column)
+                    items.setdefault(index, {})[name] = value
+
+            if items:
+                device_results[section_name] = list(items.values())
+
+        return device_results
+
+    async def advanced_scan(self, answering):
+        """
+        Perform advanced scans based on the templates.
+
+        Only with the configurations that answered the base scan: a silent one
+        would time out on each field of the template.
+        """
         advanced_results = {}
         template_oids = {}
         logging.info("Starting advanced scan based on templates...")
@@ -829,50 +1201,15 @@ class SNMPScanner:
                 )
             result.pop("template")
 
-        for community in self.configs:
-            for ip in community["ips"]:
-                logging.debug(
-                    f"======== Advance scanning {ip} with community "
-                    f"'{community['name']}' and version "
-                    f"'{community['version']}' ========"
-                )
-                device_results = {}
-                if ip in template_oids:
-                    for section_name, section in template_oids[ip].items():
-                        logging.debug(f"Processing section {section_name}...")
-                        for dic in section:
-                            name = dic["name"]
-                            oid = dic["retrieval_value"]
-                            mode = dic["retrieval_method"]
-                            logging.debug(
-                                f"Scanning '{name}' - OID {oid} with mode {mode}"
-                            )
-                            snmp_results = await self.snmp_scan(
-                                community, ip, oid, community["version"], mode
-                            )
-
-                            if snmp_results:
-                                index = 0
-                                for oid, value in snmp_results:
-                                    if section_name in device_results:
-                                        # use index of the value in snmp_results
-                                        # to keep track of the order
-                                        if index < len(device_results[section_name]):
-                                            device_results[section_name][index][
-                                                name
-                                            ] = value
-                                            index += 1
-                                        else:
-                                            device_results[section_name].append(
-                                                {name: value}
-                                            )
-                                            index += 1
-                                    else:
-                                        device_results[section_name] = [{name: value}]
-                                        index += 1
-                                advanced_results[ip] = device_results
-                            else:
-                                logging.debug("No SNMP response received")
+        tasks = [
+            (community, ip, template_oids[ip])
+            for community, ip in answering
+            if ip in template_oids
+        ]
+        devices_results = await self.run_bounded(tasks, self.advanced_scan_device)
+        for (community, ip, template), device_results in zip(tasks, devices_results):
+            if device_results:
+                advanced_results[ip] = device_results
 
         self.format_to_template(advanced_results)
         return advanced_results
@@ -881,8 +1218,14 @@ class SNMPScanner:
         # decomposed structure
         decomposed = {}
         for section in data["sections"]:
+            # the server refuses data for an inactive section
+            if not section.get("is_active", True):
+                logging.debug(f"Skipping inactive section {section['name']}")
+                continue
             section_dict = []
             for field in section["fields"]:
+                if not field["retrieval_value"]:
+                    continue
                 field_dict = {}
                 # map the field name to its retrieval value
                 field_dict["name"] = field["name"]
@@ -909,6 +1252,7 @@ class SNMPScanner:
             for device in self.formatted_results:
                 try:
                     method = device.pop("method")
+                    asset_id = device.pop("asset_id", None)
                     logging.debug(
                         f"Processing device {device.get('uuid', 'unknown')} "
                         f"with method {method}"
@@ -940,30 +1284,34 @@ class SNMPScanner:
                         asset_id = response.json()["id"]
                         assets.append(asset_id)
                         # server logging
-                        self.server_logger(
-                            asset_id,
-                            "INFO",
-                            (
-                                "INVENTORY_BASE_INSERT"
-                                if method == "POST"
-                                else "INVENTORY_BASE_UPDATE"
-                            ),
-                            msg,
+                        scope = (
+                            "INVENTORY_BASE_INSERT"
+                            if method == "POST"
+                            else "INVENTORY_BASE_UPDATE"
                         )
+                        self.server_logger(asset_id, "INFO", scope, msg)
+                        if device["serial"] == EMPTY_SERIAL:
+                            self.server_logger(
+                                asset_id,
+                                "WARNING",
+                                scope,
+                                "No serial number found on the device, "
+                                f"stored as '{EMPTY_SERIAL}'",
+                            )
                     else:
                         logging.error(
                             f"Failed to {'create' if method == 'POST' else 'update'} "
                             f"device {device['uuid']}. "
                             f"Status: {response.status_code}, Response: {response.text}"
                         )
-
-                        self.server_logger(
-                            asset_id,
-                            "ERROR",
-                            "INVENTORY_BASE_ERR",
-                            f"Failed to {'create' if method == 'POST' else 'update'} "
-                            f"SNMP asset",
-                        )
+                        # a device that could not be created has no asset to log on
+                        if asset_id is not None:
+                            self.server_logger(
+                                asset_id,
+                                "ERROR",
+                                "INVENTORY_BASE_ERR",
+                                "Failed to update SNMP asset",
+                            )
 
                 except requests.exceptions.RequestException as e:
                     logging.error(
@@ -988,23 +1336,24 @@ class SNMPScanner:
 
         return assets
 
-    def store_data_locally(self, data):
-        """Store inventories locally, naming the files with the device's uuid."""
+    def clear_local_inventories(self):
+        """Empty the local inventory directory before the scan."""
         if os.path.exists(self.inventoy_dir):
             for file in os.listdir(self.inventoy_dir):
-                # remove all files in the directory
                 os.remove(self.inventoy_dir + "/" + file)
-
-            for device in data:
-                filename = "/" + device["uuid"] + ".json"
-                with open(self.inventoy_dir + filename, "w") as file:
-                    json.dump(device, file)
-                    logging.info(f"Device {device['uuid']} stored locally")
         else:
             logging.error(
                 f"Local inventory directory {self.inventoy_dir} not found, exiting..."
             )
-            exit()
+            exit(1)
+
+    def store_data_locally(self, data):
+        """Store inventories locally, naming the files with the device's uuid."""
+        for device in data:
+            filename = "/" + device["uuid"] + ".json"
+            with open(self.inventoy_dir + filename, "w") as file:
+                json.dump(device, file)
+                logging.info(f"Device {device['uuid']} stored locally")
 
     def format_to_base(self, results):
         """
@@ -1035,6 +1384,18 @@ class SNMPScanner:
                     if value:
                         device_template[name] = value
 
+            # the server refuses an asset without a name
+            if not device_template["name"].strip():
+                logging.warning(f"No sysName for IP {ip}, using the IP as name")
+                device_template["name"] = ip
+
+            if len(device_template["name"]) > MAX_NAME_LENGTH:
+                device_template["name"] = device_template["name"][:MAX_NAME_LENGTH]
+                logging.warning(
+                    f"sysName of IP {ip} longer than {MAX_NAME_LENGTH} characters, "
+                    f"truncated to '{device_template['name']}'"
+                )
+
             if not device_template["uuid"]:
                 device_template["uuid"] = (
                     device_template["name"] + "-" + device_template["srcip"]
@@ -1056,7 +1417,7 @@ class SNMPScanner:
 
     def get_templates(self):
         """Retrieve the available templates from the server."""
-        asset_url = self.base_url + self.asset_endpoint + "?uuid="
+        asset_url = self.base_url + self.asset_endpoint
         headers = {
             "Content-Type": "application/json",
             "Authorization": "Token " + self.token,
@@ -1064,12 +1425,13 @@ class SNMPScanner:
 
         for result in self.formatted_results:
             # check if the device exists already
-            url = asset_url + result["uuid"] + "&expand=*"
-            response = self.request("GET", url, headers=headers)
+            params = {"uuid": result["uuid"], "expand": "*"}
+            response = self.request("GET", asset_url, headers=headers, params=params)
             if response.status_code == 200 and response.json():
                 existing_asset = response.json()[0]
                 asset_id = response.json()[0]["id"]
                 result["method"] = "PUT"
+                result["asset_id"] = asset_id
                 # if a template has been assigned
                 if existing_asset.get("template"):
                     result["template"] = existing_asset["template"]
@@ -1091,44 +1453,50 @@ class SNMPScanner:
 
     async def run(self):
         """Main method to run the scanner."""
-        # if the scanner is in ONLINE mode and the server is not
-        # reachable, switch to OFFLINE mode
         if self.mode == "ONLINE" and not self.check_server():
-            logging.error("Server is not reachable, switching to OFFLINE mode...")
-            self.mode = "OFFLINE"
+            logging.error("Cannot authenticate on the OCS server, exiting...")
+            exit(1)
         self.retrieve_snmp_configuration()
         if not self.configs:
             logging.error(
                 "No SNMP configuration loaded : Failed to retrieve SNMP "
                 "configuration (403). Check OCS user permissions."
             )
-            exit()
+            exit(1)
+        self.set_auth_data()
+        if self.mode == "OFFLINE":
+            self.clear_local_inventories()
 
-        # base scan
-        scan_results = await self.scan_network()
-        self.formatted_results = self.format_to_base(scan_results)
+        # each batch is sent before the next one is scanned: a stop loses one batch
+        batches = list(self.batch_tasks(self.scan_tasks()))
+        for number, batch in enumerate(batches, 1):
+            logging.info(f"Scanning batch {number}/{len(batches)}")
+            # base scan
+            scan_results, answering = await self.scan_network(batch)
+            self.formatted_results = self.format_to_base(scan_results)
+
+            if self.mode == "ONLINE":
+                # associate formatted results with their appropriate templates,
+                # based on their uuid
+                self.get_templates()
+                # perform advanced scans based on templates
+                self.advanced_results = await self.advanced_scan(answering)
+                # sending inventory to OCS
+                self.assets += self.send_to_ocs()
+
+            elif self.mode == "OFFLINE":
+                self.store_data_locally(self.formatted_results)
 
         if self.mode == "ONLINE":
-            # associate formatted results with their appropriate templates,
-            # based on their uuid
-            self.get_templates()
-            # perform advanced scans based on templates
-            self.advanced_results = await self.advanced_scan()
-            # sending inventory to OCS
-            self.assets = self.send_to_ocs()
-            logging.info(
-                f"Scan complete. Found a total of {len(self.formatted_results)} devices"
-            )
+            logging.info(f"Scan complete. Found a total of {self.nb_found} devices")
             # create scanner instance
-            self.scan_date = datetime.now()
+            self.scan_date = datetime.now(timezone.utc)
             self.update_or_create_scanner()
 
         elif self.mode == "OFFLINE":
-            self.store_data_locally(self.formatted_results)
             logging.info(
                 f"Inventories stored locally in {self.inventoy_dir}. "
-                f"Scan complete. Found a total of "
-                f"{len(self.formatted_results)} devices."
+                f"Scan complete. Found a total of {self.nb_found} devices."
             )
 
 

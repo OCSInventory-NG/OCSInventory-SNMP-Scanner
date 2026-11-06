@@ -2,6 +2,8 @@
 
 # SNMP library
 pysnmp>=7.1.6,<8
+# SNMPv3 privacy (DES, AES), not installed by pysnmp; pysnmp 7.1.30 needs 47 for AES
+cryptography>=47
 
 # Other dependencies
 pysmi>=1.6.2
