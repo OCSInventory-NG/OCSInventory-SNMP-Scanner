@@ -1302,7 +1302,19 @@ class SNMPScanner:
                         logging.info(msg)
                         # keeping ids of created/updated assets to update
                         # scanner instance
-                        asset_id = response.json()["id"]
+                        body = response.json()
+                        # with template errors, the server answers a list
+                        # without the id: keep the one of the lookup
+                        if isinstance(body, dict) and "id" in body:
+                            asset_id = body["id"]
+                        else:
+                            logging.warning(
+                                f"No asset id in the server response for device "
+                                f"{device['uuid']}: {response.text}"
+                            )
+                        if asset_id is None:
+                            # created with errors: associated on the next scan
+                            continue
                         assets.append(asset_id)
                         # server logging
                         scope = (
