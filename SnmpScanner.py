@@ -1117,7 +1117,8 @@ class SNMPScanner:
                 )
             for oid, value in snmp_results or []:
                 serial = value.replace("\x00", "").strip()
-                if serial:
+                # "0" or binary data: not a serial (Eltex TAU answers 0)
+                if serial.strip("0") and serial.isprintable():
                     logging.debug(f"Serial number of IP {ip} found in {mib}: {oid}")
                     return serial
 
