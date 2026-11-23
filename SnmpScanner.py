@@ -42,6 +42,8 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 VERSION = "3.0.0"
 DEFAULT_MAX_CONCURRENT_DEVICES = 50
 SCAN_BATCH_SIZE = 1000
+# bounds a walk whatever the agent answers
+MAX_WALK_ROWS = 10000
 # the server stores this for agents without a serial number and ignores it
 # when reconciling assets
 EMPTY_SERIAL = "Empty"
@@ -899,6 +901,8 @@ class SNMPScanner:
                                 )
                                 continue
                 else:  # SNMP_WALK
+                    last_oid = ()
+                    nb_rows = 0
                     async for (
                         error_indication,
                         error_status,
@@ -927,6 +931,23 @@ class SNMPScanner:
                             )
                             break
                         else:
+                            # pysnmp asks again for an OID that does not increase,
+                            # and some agents answer it forever (Eltex TAU)
+                            oid_key = tuple(var_binds[0][0])
+                            if oid_key <= last_oid:
+                                logging.warning(
+                                    f"WALK loop detected for IP {ip} at "
+                                    f"{var_binds[0][0]}, stopping this walk"
+                                )
+                                break
+                            last_oid = oid_key
+                            nb_rows += 1
+                            if nb_rows > MAX_WALK_ROWS:
+                                logging.warning(
+                                    f"WALK of {oid} for IP {ip} stopped after "
+                                    f"{MAX_WALK_ROWS} rows"
+                                )
+                                break
                             for var_bind in var_binds:
                                 try:
                                     oid_str = str(var_bind[0])
