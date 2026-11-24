@@ -47,6 +47,8 @@ MAX_WALK_ROWS = 10000
 # the server stores this for agents without a serial number and ignores it
 # when reconciling assets
 EMPTY_SERIAL = "Empty"
+# a serial generated from the MAC address, the agent prefix
+GENERATED_SERIAL_PREFIX = "OCS-GEN-"
 # the longest asset name the server accepts
 MAX_NAME_LENGTH = 50
 # walked in this order by get_serial, after the serial_oids ones
@@ -1090,19 +1092,22 @@ class SNMPScanner:
 
         # only devices that answered, a silent IP would time out again
         if device_results:
-            device_results["serial"] = await self.get_serial(snmp_engine, community, ip)
             device_results["srcmac"] = await self.get_mac(snmp_engine, community, ip)
+            device_results["serial"] = await self.get_serial(
+                snmp_engine, community, ip, device_results["srcmac"]
+            )
 
         return device_results
 
-    async def get_serial(self, snmp_engine, community, ip):
+    async def get_serial(self, snmp_engine, community, ip, mac=""):
         """
         Get the serial number of a device, walking each serial OID, or reading
         it when it is an instance (e.g. the .0 of a scalar).
 
         The first non-empty value wins, whatever its index: the chassis is not
-        always entity 1 (e.g. 1001 on a switch stack). Falls back to
-        EMPTY_SERIAL, the server rejects an empty serial.
+        always entity 1 (e.g. 1001 on a switch stack). Falls back to a serial
+        generated from the MAC address, then to EMPTY_SERIAL, the server
+        rejects an empty serial.
         """
         for mib, serial_oid in self.serial_oids.items():
             snmp_results = await self.snmp_scan(
@@ -1124,6 +1129,18 @@ class SNMPScanner:
                 if serial.strip("0") and serial.isprintable():
                     logging.debug(f"Serial number of IP {ip} found in {mib}: {oid}")
                     return serial
+
+        if mac:
+            # the agent format, the 10 random digits replaced by the middle of
+            # the MAC address: the same device always gets the same serial
+            octets = mac.split(":")
+            middle = int("".join(octets[1:5]), 16)
+            serial = f"{GENERATED_SERIAL_PREFIX}{octets[5]}{middle:010d}{octets[0]}"
+            logging.warning(
+                f"No serial number found for IP {ip} in "
+                f"{', '.join(self.serial_oids)}, using '{serial}' from its MAC address"
+            )
+            return serial
 
         logging.warning(
             f"No serial number found for IP {ip} in "
@@ -1327,13 +1344,16 @@ class SNMPScanner:
                             else "INVENTORY_BASE_UPDATE"
                         )
                         self.server_logger(asset_id, "INFO", scope, msg)
-                        if device["serial"] == EMPTY_SERIAL:
+                        serial = device["serial"]
+                        if serial == EMPTY_SERIAL or serial.startswith(
+                            GENERATED_SERIAL_PREFIX
+                        ):
                             self.server_logger(
                                 asset_id,
                                 "WARNING",
                                 scope,
                                 "No serial number found on the device, "
-                                f"stored as '{EMPTY_SERIAL}'",
+                                f"stored as '{serial}'",
                             )
                     else:
                         logging.error(
