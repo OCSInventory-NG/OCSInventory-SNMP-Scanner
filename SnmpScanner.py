@@ -757,7 +757,10 @@ class SNMPScanner:
         data_type = value.__class__.__name__
         if data_type == "OctetString":
             octets = value.asOctets()
-            printable = octets.isascii() and octets.decode().isprintable()
+            try:
+                printable = octets.decode("utf-8").isprintable()
+            except UnicodeDecodeError:
+                printable = False
             # a MAC address comes as 6 raw bytes, 6 printable characters stay text
             # outside ifPhysAddress
             in_phys_address = str(oid).startswith(IF_PHYS_ADDRESS + ".")
