@@ -7,7 +7,7 @@ The SNMP Scanner is a tool designed to scan networks and collect device informat
 The scanner can operate in two modes: `online` and `offline`.
 #### Online
 In `online` mode, the scanner queries the OCS server to check whether or not the device has already been scanned and if so, checks if a template has been defined for it. If a template is available, the scanner performs an advanced scan using the custom template. The scanner then sends the inventory data to the server.
-> Note : If the scanner is unable to get/send data to the OCS server, it will switch to `offline` mode automatically. Inventory data will be stored in individual files in the `local_inventory_dir` directory and local configuration will be used.
+> Note : In `online` mode, if the scanner cannot reach the OCS server or authenticate on it, it logs an error and stops. Every error that stops the scanner gives exit code `1`. To scan with the local configuration and store inventories in `local_inventory_dir`, use the `offline` mode.
 
 #### Offline
 In `offline` mode, the scanner only uses the base template and does not query the OCS server at all, storing the inventory data in individual files at the end of the scan.
@@ -18,6 +18,8 @@ The scanner supports SNMPv1, SNMPv2c and SNMPv3. The version to use is either sp
 
 #### Basic scan
 The basic scan is performed using a hardcoded base template corresponding to the InventoryBase model fields. The scanner purposefully uses generic OIDs to populate the fields, as the goal is to retrieve as much information as possible from the devices, regardless of their type. The basic scan is performed for all devices, regardless of whether or not a custom template is available for them.
+
+No generic OID holds a serial number on every device, so the scanner walks ENTITY-MIB `entPhysicalSerialNum` (`1.3.6.1.2.1.47.1.1.1.1.11`), then Printer-MIB `prtGeneralSerialNumber` (`1.3.6.1.2.1.43.5.1.1.17`), and keeps the first non-empty value. If neither returns one, the serial is set to `Empty`, the value the OCS server already stores for agents without a serial number. The OIDs of the `serial_oids` setting are walked before these two. A device without a sysName is named after its IP, a sysName longer than 50 characters is truncated (the longest name the OCS server accepts).
 
 #### Advanced scan
 If a custom template is available for a device, the scanner performs an advanced scan using the custom template. The custom template is retrieved from the OCS server and contains a list of OIDs (fields) regrouped in sections. The scanner uses the OIDs to retrieve the corresponding values from the devices and populates the fields with the values.
@@ -31,6 +33,7 @@ If a custom template is available for a device, the scanner performs an advanced
 ### Python
 See `requirements.txt` for the authoritative list and version bounds:
 - `pysnmp` (>= 7.1.6, < 8)
+- `cryptography` (>= 47), for SNMPv3 privacy (DES, AES)
 - `pysmi` (>= 1.6.2)
 - `requests`
 
@@ -56,7 +59,7 @@ SNMP must be enabled on the OCS server and at least one SNMP configuration must 
 - Privacy password : Privacy password to use (only for SNMPv3)
 - Retries : number of retries to perform when scanning a device
 - Timeout : timeout in seconds to wait for a response from a device
-- Subnets : list of subnets to scan, in CIDR notation. These will be matched against the Scanner's `subnets` field to determine if the scanner should use this configuration to scan a device
+- Subnets : list of subnets to scan, in CIDR notation. A scanner uses the configuration on the addresses that are both in these subnets and in its own `subnets` field: a configuration on `10.0.0.0/16` assigned to a scanner on `10.0.1.0/24` scans `10.0.1.0/24`, and the other way round. Invalid subnets, such as `192.168.1.1/24` (host bits set), are skipped with a warning
 
 > Configurations need to be assigned to the scanner in  OCS web interface. The scanner will use the `subnets` field to determine which configuration to use to scan which device.
 
@@ -112,9 +115,11 @@ The `scanner.conf` file contains the following sections and fields:
 	- `scanner_mode` : the mode to run the scanner in (`ONLINE` or `OFFLINE`)
 	- `local_inventory_dir` : the directory to store the inventory data in when running in `offline` mode
 	- `targeted_subnets` : the subnets to scan, separated by commas no spaces, used in `offline` mode
+	- `max_concurrent_devices` : the maximum number of devices queried at the same time (default `50`, `1` queries one device at a time). When the key is absent, or its value is not an integer of at least `1`, the default is used; an invalid value is also reported as a warning in the log. The value in use is logged at startup: `Scan concurrency: up to 50 devices at a time`
 	- `log_level` : the log level to use (INFO, DEBUG, WARNING, ERROR, CRITICAL)
 	- `name` : the unique name of the scanner. This field will be used to identify the scanner in the OCS server's database. Not used in `offline` mode
-  - `mibs_dir` : the MIB directory path
+  - `mibs_dir` : the directory of your custom MIBs. See [Custom MIBs](#custom-mibs)
+  - `serial_oids` : OIDs walked for the serial number before ENTITY-MIB and Printer-MIB, in this order, separated by commas (optional). The first non-empty value wins. Give the OID of the object (`1.3.6.1.4.1.9.3.6.3`) or of its instance (`1.3.6.1.4.1.9.3.6.3.0`). Invalid entries are skipped with a warning
   - `server_logging_enabled` : enable server logging or not. Not used in `offline` mode
   - `server_log_level`: server log level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
 
@@ -139,6 +144,19 @@ As a last resort, `bypass_certificate = true` disables validation altogether. Th
 The scanner states which mode is active at startup:
 ```
 Certificate mode: TLS enabled (system store), fallback certificate path available: /etc/ssl/certs/ocs-ca.pem
+```
+
+#### Custom MIBs
+
+Put the MIB files of your devices in `mibs_dir`, subdirectories included. File names do not matter: each module is found by the name declared in its file (`ACME-MIB DEFINITIONS ::= BEGIN`), and files that declare none are ignored.
+
+The values of the objects defined in these MIBs, and in the MIBs they import, are formatted according to their definition: enumerations by name (`up` instead of `1`), object identifiers by name (`ACME-MIB::acmeSwitch24`), strings by their display hint (MAC addresses for example). The OIDs of the templates stay numeric.
+
+The modules a MIB imports are looked up in `mibs_dir` first, then in `/usr/share/snmp/mibs` and `/usr/share/mibs`, where distributions install the standard MIBs (`snmp-mibs-downloader` package on Debian and Ubuntu).
+
+MIBs are compiled at startup into `~/.pysnmp/mibs` of the user running the scanner (`/var/lib/ocsinventory-snmp-scanner/.pysnmp/mibs` with the packages), and compiled again only when their file changes. A MIB that cannot be compiled or loaded is reported in the log with its file and the reason, for example a missing import; the other MIBs are loaded anyway. The startup log lists the modules loaded:
+```
+2 MIB modules loaded from /var/lib/ocsinventory-snmp-scanner/mibs: ACME-SMI, ACME-MIB
 ```
 
 
@@ -226,7 +244,7 @@ In the example above, the INFORMATION section is set to use the SNMP_GET method,
 
 #### SNMP_WALK mode
 Starting from a given OID, walk the SNMP tree and retrieve a list of data
-> For this mode to work, we expect the OIDs used in a same section to belong to the same SNMP node and have the same indexes. In practice, this means that the indexes from the first OID being walked will be used for the rest of the fields. 
+> For this mode to work, the OIDs of a same section must be columns of the same SNMP table. Values are matched by their index, the end of their OID after the field's OID: each index gives one item, and a field without a value for an index is left out of that item. 
 
 #### SNMP_GET mode
 Get the value corresponding to the given OID

@@ -17,7 +17,7 @@
     "id": 2,
     "name": "public",
     "version": "3",
-    "user": "",
+    "user": "snmpuser",
     "auth_level": "noAuthNoPriv",
     "password": "",
     "auth_protocol": "MD5",
